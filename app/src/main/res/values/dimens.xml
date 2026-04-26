@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="tile_min_height">180dp</dimen>
+    <dimen name="tile_corner_radius">24dp</dimen>
+    <dimen name="tile_margin">12dp</dimen>
+    <dimen name="tile_padding">24dp</dimen>
+    <dimen name="ai_button_min_height">160dp</dimen>
+    <dimen name="text_title">28sp</dimen>
+    <dimen name="text_body">24sp</dimen>
+    <dimen name="text_subtitle">20sp</dimen>
+    <dimen name="text_hint">22sp</dimen>
+    <dimen name="text_small">18sp</dimen>
+    <dimen name="icon_size">48dp</dimen>
+    <dimen name="button_corner_radius">16dp</dimen>
+    <dimen name="min_touch_target">60dp</dimen>
+</resources>

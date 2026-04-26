@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色主题 (匹配 pet-companion.html 风格) -->
+    <style name="Theme.AILaoHuo" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="colorPrimaryContainer">@color/primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/on_primary_container</item>
+        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorOnSecondary">@color/on_secondary</item>
+        <item name="colorTertiary">@color/tertiary</item>
+        <item name="colorOnTertiary">@color/on_tertiary</item>
+        <item name="android:colorBackground">@color/background_dark</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorSurfaceVariant">@color/surface_container</item>
+        <item name="colorOnSurface">@color/text_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary_dark</item>
+        <item name="colorOutline">@color/outline</item>
+        <item name="colorOutlineVariant">@color/outline_variant</item>
+        <item name="colorError">@color/error</item>
+        <item name="colorOnError">@color/on_error</item>
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:statusBarColor">@color/background_dark</item>
+        <item name="android:navigationBarColor">@color/background_dark</item>
+    </style>
+
+    <!-- 毛玻璃卡片样式 -->
+    <style name="GlassCard">
+        <item name="android:background">@drawable/bg_glass_card</item>
+    </style>
+
+    <!-- 主按钮样式 -->
+    <style name="PrimaryButton" parent="Widget.Material3.Button">
+        <item name="android:backgroundTint">@color/primary_container</item>
+        <item name="android:textColor">@color/on_primary_container</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:minHeight">80dp</item>
+        <item name="cornerRadius">24dp</item>
+    </style>
+
+    <!-- 次要按钮样式 -->
+    <style name="SecondaryButton" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="strokeColor">@color/outline</item>
+        <item name="android:textColor">@color/text_primary_dark</item>
+        <item name="cornerRadius">16dp</item>
+    </style>
+
+    <!-- 深色页面标题 -->
+    <style name="PageTitle">
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textSize">28sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- 深色页面描述 -->
+    <style name="PageDescription">
+        <item name="android:textColor">@color/text_secondary_dark</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:lineSpacingExtra">8dp</item>
+    </style>
+</resources>

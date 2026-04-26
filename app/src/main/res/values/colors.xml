@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 主题颜色 -->
+    <color name="primary">#FFC688</color>
+    <color name="primary_container">#FF9F0A</color>
+    <color name="on_primary">#482900</color>
+    <color name="on_primary_container">#673D00</color>
+    <color name="secondary">#C8C6C8</color>
+    <color name="secondary_container">#474649</color>
+    <color name="on_secondary">#303032</color>
+    <color name="on_secondary_container">#B6B4B7</color>
+    <color name="tertiary">#93DAFF</color>
+    <color name="tertiary_container">#00C3FF</color>
+    <color name="on_tertiary">#003548</color>
+    <color name="on_tertiary_container">#004D67</color>
+    <color name="error">#FFB4AB</color>
+    <color name="error_container">#93000A</color>
+    <color name="on_error">#690005</color>
+    <color name="on_error_container">#FFDAD6</color>
+    <color name="background">#131313</color>
+    <color name="on_background">#E2E2E2</color>
+    <color name="surface">#131313</color>
+    <color name="on_surface">#E2E2E2</color>
+    <color name="surface_variant">#353535</color>
+    <color name="on_surface_variant">#DAC3AD</color>
+    <color name="outline">#A28D79</color>
+    <color name="outline_variant">#544433</color>
+    <color name="inverse_surface">#E2E2E2</color>
+    <color name="inverse_on_surface">#303030</color>
+    <color name="inverse_primary">#885200</color>
+    <color name="surface_tint">#FFB868</color>
+    <color name="primary_fixed">#FFDDBB</color>
+    <color name="primary_fixed_dim">#FFB868</color>
+    <color name="on_primary_fixed">#2B1700</color>
+    <color name="on_primary_fixed_variant">#673D00</color>
+    <color name="secondary_fixed">#E4E2E4</color>
+    <color name="secondary_fixed_dim">#C8C6C8</color>
+    <color name="on_secondary_fixed">#1B1B1D</color>
+    <color name="on_secondary_fixed_variant">#474649</color>
+    <color name="tertiary_fixed">#C1E8FF</color>
+    <color name="tertiary_fixed_dim">#73D1FF</color>
+    <color name="on_tertiary_fixed">#001E2B</color>
+    <color name="on_tertiary_fixed_variant">#004D67</color>
+    <color name="surface_dim">#131313</color>
+    <color name="surface_bright">#393939</color>
+    <color name="surface_container_lowest">#0E0E0E</color>
+    <color name="surface_container_low">#1B1B1B</color>
+    <color name="surface_container">#1F1F1F</color>
+    <color name="surface_container_high">#2A2A2A</color>
+    <color name="surface_container_highest">#353535</color>
+
+    <!-- 自定义颜色 -->
+    <color name="white">#FFFFFF</color>
+    <color name="white_50">#80FFFFFF</color>
+    <color name="white_25">#40FFFFFF</color>
+    <color name="white_10">#1AFFFFFF</color>
+    <color name="white_08">#14FFFFFF</color>
+    <color name="white_05">#0DFFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="zinc_400">#A1A1AA</color>
+    <color name="zinc_500">#71717A</color>
+    <color name="orange_500">#FF9F0A</color>
+    <color name="orange_500_90">#E6FF9F0A</color>
+    <color name="emerald_500">#4ADE80</color>
+    <color name="ffc688">#FFC688</color>
+
+    <!-- 半透明颜色 -->
+    <color name="primary_container_15">#26FF9F0A</color>
+    <color name="primary_container_20">#33FF9F0A</color>
+    <color name="primary_container_30">#4DFF9F0A</color>
+    
+    <!-- 缺失的颜色资源 -->
+    <color name="text_primary_dark">#E2E2E2</color>
+    <color name="text_secondary_dark">#B6B4B7</color>
+    <color name="background_dark">#131313</color>
+    <color name="surface_dark">#131313</color>
+    <color name="text_on_surface">#E2E2E2</color>
+    <color name="glass_background">#80131313</color>
+    <color name="glass_border">#40FFFFFF</color>
+    <color name="success_green">#4ADE80</color>
+</resources>

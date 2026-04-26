@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI沪老</string>
+    <string name="btn_ai_assistant">AI 助手</string>
+    <string name="btn_taxi">我要打车</string>
+    <string name="btn_contact">联系人</string>
+    <string name="permission_camera">需要摄像头权限</string>
+    <string name="permission_microphone">需要麦克风权限</string>
+    <string name="permission_phone">需要电话权限</string>
+    <string name="permission_screen_record">需要屏幕录制权限</string>
+    <string name="setup_welcome">欢迎使用 AI 沪老</string>
+    <string name="setup_guide">请按照指引完成设置</string>
+    <string name="contact_binding">绑定联系人</string>
+    
+    <!-- 设置页面 -->
+    <string name="settings_title">设置</string>
+    <string name="back_button">返回</string>
+    <string name="settings_voice">语音设置</string>
+    <string name="settings_notifications">通知设置</string>
+    <string name="settings_privacy">隐私设置</string>
+    <string name="settings_about">关于</string>
+    
+    <!-- 语音设置 -->
+    <string name="settings_voice_language">语音语言</string>
+    <string name="settings_voice_language_desc">选择语音助手的语言</string>
+    <string name="language_chinese">中文</string>
+    <string name="language_english">英语</string>
+    <string name="settings_voice_speed">语音速度</string>
+    <string name="settings_voice_pitch">语音音调</string>
+    
+    <!-- 通知设置 -->
+    <string name="settings_notifications_enable">启用通知</string>
+    <string name="settings_notifications_enable_desc">接收应用通知</string>
+    <string name="settings_notifications_sound">通知声音</string>
+    <string name="settings_notifications_sound_desc">通知时播放声音</string>
+    <string name="settings_notifications_vibration">通知振动</string>
+    <string name="settings_notifications_vibration_desc">通知时振动</string>
+    
+    <!-- 隐私设置 -->
+    <string name="settings_privacy_history">保存历史记录</string>
+    <string name="settings_privacy_history_desc">保存您的使用历史</string>
+    <string name="settings_privacy_camera">使用摄像头</string>
+    <string name="settings_privacy_camera_desc">允许应用使用摄像头</string>
+    <string name="settings_privacy_microphone">使用麦克风</string>
+    <string name="settings_privacy_microphone_desc">允许应用使用麦克风</string>
+    <string name="settings_privacy_clear_history">清除历史记录</string>
+    <string name="settings_privacy_clear_history_desc">清除所有使用历史</string>
+    <string name="btn_clear">清除</string>
+    
+    <!-- 关于 -->
+    <string name="settings_about_version">版本</string>
+    <string name="settings_about_website">官方网站</string>
+    <string name="settings_about_website_desc">访问我们的官方网站</string>
+    <string name="settings_about_email">联系我们</string>
+    <string name="settings_about_email_desc">发送邮件给我们</string>
+    <string name="settings_about_copyright">版权信息</string>
+    <string name="settings_about_copyright_desc">© 2026 AI沪老团队</string>
+    
+    <!-- 通知页面 -->
+    <string name="notifications_title">通知</string>
+    <string name="notifications_tab_all">全部</string>
+    <string name="notifications_tab_important">重要</string>
+    <string name="notifications_tab_system">系统</string>
+    <string name="notifications_tab_ai_assistant">AI 助手</string>
+    <string name="notifications_empty">暂无通知</string>
+    <string name="notifications_empty_desc">您还没有收到任何通知</string>
+    <string name="btn_view">查看</string>
+    
+    <!-- 通知内容 -->
+    <string name="notification_ai_assistant_title">AI 助手提醒</string>
+    <string name="notification_ai_assistant_message">您的语音助手已准备就绪，可以开始使用了</string>
+    <string name="notification_system_title">系统通知</string>
+    <string name="notification_system_message">应用已更新到最新版本</string>
+    <string name="notification_message_title">新消息</string>
+    <string name="notification_message_message">您有一条新的消息</string>
+    <string name="notification_alert_title">提醒</string>
+    <string name="notification_alert_message">您的打车请求已确认</string>
+    
+    <!-- 无障碍服务 -->
+    <string name="accessibility_desc">AI沪老无障碍服务，帮助老年人使用手机</string>
+</resources>
