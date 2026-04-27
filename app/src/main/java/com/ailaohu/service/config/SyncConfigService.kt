@@ -13,7 +13,7 @@ data class SyncConfig(
     val contacts: List<ContactConfig> = emptyList(),
     val appWhitelist: List<String> = emptyList(),
     val careRules: CareRulesConfig = CareRulesConfig(),
-    val dialectMode: String = "shanghai",
+    val dialectMode: String = "mandarin",
     val volume: Int = 70,
     val fontScale: Float = 1.5f
 )
@@ -133,7 +133,7 @@ class SyncConfigService @Inject constructor(
             inactivityAlertHours = 48,
             dailyReportEnabled = true
         ),
-        dialectMode = "shanghai",
+        dialectMode = "mandarin",
         volume = 70,
         fontScale = 1.5f
     )

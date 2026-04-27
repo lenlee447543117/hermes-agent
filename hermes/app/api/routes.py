@@ -1,10 +1,11 @@
+import json
 import logging
-from typing import List
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
 from app.models.schemas import (
     ChatRequest,
     ChatResponse,
+    ChatMessage,
     ActionRequest,
     VlmRequest,
     VlmResponse,
@@ -15,13 +16,46 @@ from app.models.schemas import (
     ProactiveCareMessage,
     ErrorResponse,
     DialectMode,
+    RobotEmotion,
+    RobotUiState,
 )
-from app.services.claude_service import claude_service
+from app.services.glm_service import glm_service
 from app.services.memory_service import memory_service
 from app.services.habit_service import habit_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _get_habit_context(user_id: str) -> str | None:
+    summary = await memory_service.get_summary(user_id)
+    if not summary:
+        return None
+    profile = await habit_service.get_profile(user_id)
+    return f"历史摘要: {summary}\n用户画像: {profile.model_dump_json(exclude_none=True)}"
+
+
+def _build_robot_ui_state(result: dict) -> RobotUiState | None:
+    mode = result.get("mode")
+    intent = result.get("intent")
+    if mode and mode.value == "COMMAND" and intent:
+        return RobotUiState(
+            emotion=RobotEmotion.FOCUS,
+            status_text=f"正在执行: {intent.value}",
+            show_mask=True,
+        )
+    reply = result.get("reply", "")
+    if any(kw in reply for kw in ["啊呀", "等一歇", "抱歉", "无法"]):
+        return RobotUiState(
+            emotion=RobotEmotion.WORRIED,
+            status_text="遇到问题",
+            show_mask=False,
+        )
+    return RobotUiState(
+        emotion=RobotEmotion.SPEAKING,
+        status_text="",
+        show_mask=False,
+    )
 
 
 @router.post("/chat", response_model=ChatResponse, responses={1001: {"model": ErrorResponse}})
@@ -31,20 +65,15 @@ async def chat(request: ChatRequest):
         if request.context:
             history = request.context + history
 
-        summary = await memory_service.get_summary(request.user_id)
-        habit_context = None
-        if summary:
-            profile = await habit_service.get_profile(request.user_id)
-            habit_context = f"历史摘要: {summary}\n用户画像: {profile.model_dump_json(exclude_none=True)}"
+        habit_context = await _get_habit_context(request.user_id)
 
-        result = await claude_service.chat(
+        result = await glm_service.chat(
             user_message=request.message,
             dialect=request.dialect,
             history=history[-20:],
             habit_context=habit_context,
         )
 
-        from app.models.schemas import ChatMessage
         await memory_service.add_message(
             request.user_id,
             ChatMessage(role="user", content=request.message),
@@ -61,6 +90,7 @@ async def chat(request: ChatRequest):
                 target=result.get("action_payload", {}).target_person if result.get("action_payload") else None,
             )
 
+        result["robot_ui_state"] = _build_robot_ui_state(result)
         return ChatResponse(**result)
 
     except Exception as e:
@@ -165,18 +195,33 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            import json
             try:
                 msg = json.loads(data)
                 message = msg.get("message", "")
 
                 history = await memory_service.get_recent_messages(user_id)
-                result = await claude_service.chat(
+                try:
+                    dialect = DialectMode(msg.get("dialect", "shanghai"))
+                except ValueError:
+                    dialect = DialectMode.SHANGHAI
+
+                result = await glm_service.chat(
                     user_message=message,
-                    dialect=DialectMode(msg.get("dialect", "shanghai")),
+                    dialect=dialect,
                     history=history[-20:],
+                    habit_context=await _get_habit_context(user_id),
                 )
 
+                await memory_service.add_message(
+                    user_id,
+                    ChatMessage(role="user", content=message),
+                )
+                await memory_service.add_message(
+                    user_id,
+                    ChatMessage(role="assistant", content=result.get("reply", "")),
+                )
+
+                result["robot_ui_state"] = _build_robot_ui_state(result)
                 await websocket.send_json(result)
 
             except json.JSONDecodeError:

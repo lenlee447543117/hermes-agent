@@ -1,6 +1,10 @@
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +13,7 @@ from app.config.settings import settings
 from app.api.routes import router
 from app.api.admin_routes import router as admin_router
 from app.services.memory_service import memory_service
+from app.services.glm_service import glm_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +28,7 @@ async def lifespan(app: FastAPI):
     await memory_service.connect()
     logger.info("✅ Memory service (Redis) connected")
     yield
+    await glm_service.close()
     await memory_service.disconnect()
     logger.info("👋 Hermes shutting down")
 
@@ -44,6 +50,28 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v1", tags=["Hermes"])
 app.include_router(admin_router, prefix="/api/v1/admin", tags=["Admin"])
+
+
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        start = time.time()
+        response: StarletteResponse = await call_next(request)
+        elapsed = time.time() - start
+        response.headers["X-Process-Time"] = f"{elapsed:.3f}s"
+        return response
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response: StarletteResponse = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+
+app.add_middleware(TimingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.get("/health")

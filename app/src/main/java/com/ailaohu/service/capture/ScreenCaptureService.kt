@@ -38,10 +38,7 @@ class ScreenCaptureService : Service() {
 
         fun getRunningInstance(): ScreenCaptureService? = instance
 
-        private var pendingResultCode: Int? = null
-        private var pendingData: Intent? = null
         private var captureCallback: ((android.graphics.Bitmap?) -> Unit)? = null
-        private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
         fun startCapture(
             context: Context,
@@ -49,9 +46,19 @@ class ScreenCaptureService : Service() {
             data: Intent,
             callback: (android.graphics.Bitmap?) -> Unit
         ) {
-            pendingResultCode = resultCode
-            pendingData = data
             captureCallback = callback
+
+            val runningInstance = instance
+            if (runningInstance != null && runningInstance.isProjectionSetup) {
+                Log.d(TAG, "MediaProjection已就绪，直接截图")
+                runningInstance.serviceScope.launch {
+                    delay(100)
+                    val bitmap = runningInstance.captureScreen()
+                    callback(bitmap)
+                    captureCallback = null
+                }
+                return
+            }
 
             val intent = Intent(context, ScreenCaptureService::class.java).apply {
                 action = ACTION_CAPTURE_SCREEN
@@ -74,6 +81,9 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private val handler = Handler(Looper.getMainLooper())
+    val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    var isProjectionSetup = false
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -83,6 +93,19 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CAPTURE_SCREEN) {
+            startForeground(NOTIFICATION_ID, createNotification())
+
+            if (isProjectionSetup && mediaProjection != null && virtualDisplay != null) {
+                Log.d(TAG, "MediaProjection已就绪，直接截图")
+                serviceScope.launch {
+                    delay(100)
+                    val bitmap = captureScreen()
+                    captureCallback?.invoke(bitmap)
+                    captureCallback = null
+                }
+                return START_STICKY
+            }
+
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
             val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
@@ -96,31 +119,39 @@ class ScreenCaptureService : Service() {
                 return START_NOT_STICKY
             }
 
-            startForeground(NOTIFICATION_ID, createNotification())
+            try {
+                val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
-            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        Log.d(TAG, "MediaProjection stopped")
+                        isProjectionSetup = false
+                        cleanup()
+                        isRunning = false
+                    }
+                }, null)
 
-            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() {
-                    Log.d(TAG, "MediaProjection stopped")
-                    cleanup()
-                    isRunning = false
+                setupVirtualDisplay()
+                isProjectionSetup = true
+                isRunning = true
+
+                serviceScope.launch {
+                    delay(300)
+                    val bitmap = captureScreen()
+                    captureCallback?.invoke(bitmap)
+                    captureCallback = null
                 }
-            }, null)
-
-            setupVirtualDisplay()
-            isRunning = true
-
-            serviceScope.launch {
-                delay(100)
-                val bitmap = captureScreen()
-                captureCallback?.invoke(bitmap)
-                delay(500)
-                stopSelf()
+            } catch (e: SecurityException) {
+                Log.e(TAG, "MediaProjection token已失效，清除缓存: ${e.message}")
+                isProjectionSetup = false
+                cleanup()
+                captureCallback?.invoke(null)
+                captureCallback = null
+                return START_NOT_STICKY
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun setupVirtualDisplay() {
@@ -212,14 +243,15 @@ class ScreenCaptureService : Service() {
         imageReader = null
         mediaProjection?.stop()
         mediaProjection = null
-        captureCallback = null
     }
 
     override fun onDestroy() {
         serviceScope.cancel()
         cleanup()
         isRunning = false
+        isProjectionSetup = false
         instance = null
+        captureCallback = null
         super.onDestroy()
     }
 

@@ -74,12 +74,28 @@ class ChatRequest(BaseModel):
     context: Optional[List[ChatMessage]] = None
 
 
+class RobotEmotion(str, Enum):
+    IDLE = "IDLE"
+    HAPPY = "HAPPY"
+    FOCUS = "FOCUS"
+    THINKING = "THINKING"
+    WORRIED = "WORRIED"
+    SPEAKING = "SPEAKING"
+
+
+class RobotUiState(BaseModel):
+    emotion: RobotEmotion = RobotEmotion.IDLE
+    status_text: str = ""
+    show_mask: bool = False
+
+
 class ChatResponse(BaseModel):
     reply: str
     mode: InteractionMode
     intent: Optional[IntentType] = None
     action_payload: Optional[ActionPayload] = None
     dialect: DialectMode = DialectMode.SHANGHAI
+    robot_ui_state: Optional[RobotUiState] = None
 
 
 class HabitProfile(BaseModel):

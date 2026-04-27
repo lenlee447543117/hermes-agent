@@ -48,7 +48,7 @@ class AppPreferences @Inject constructor(@ApplicationContext private val context
 
     val userId: Flow<String> = context.dataStore.data.map { it[Keys.USER_ID] ?: "default" }
     val hermesUrl: Flow<String> = context.dataStore.data.map { it[Keys.HERMES_URL] ?: "http://10.0.2.2:8000/" }
-    val dialectMode: Flow<String> = context.dataStore.data.map { it[Keys.DIALECT_MODE] ?: "shanghai" }
+    val dialectMode: Flow<String> = context.dataStore.data.map { it[Keys.DIALECT_MODE] ?: "mandarin" }
 
     val voiceFeedbackEnabled: Flow<Boolean> = context.dataStore.data.map { it[Keys.VOICE_FEEDBACK_ENABLED] ?: true }
     val voiceLanguage: Flow<String> = context.dataStore.data.map { it[Keys.VOICE_LANGUAGE] ?: "zh-CN" }

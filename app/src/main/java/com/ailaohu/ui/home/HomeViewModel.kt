@@ -136,6 +136,7 @@ class HomeViewModel @Inject constructor(
 
     // 记录上一条指令，用于重复
     private var lastCommand: VoiceCommand? = null
+    private var isAutomationRunning = false
 
     init {
         voiceCommandBridge.setOnCommandComplete {
@@ -213,6 +214,16 @@ class HomeViewModel @Inject constructor(
     private fun executeCommand(command: VoiceCommand) {
         Log.d(TAG, "=== executeCommand() 被调用，类型: ${command.javaClass.simpleName} ===")
         proactiveCareService.recordUserInteraction()
+
+        if (isAutomationRunning && command !is VoiceCommand.CancelAction) {
+            Log.d(TAG, "自动化操作执行中，忽略新指令: ${command.javaClass.simpleName}")
+            return
+        }
+
+        if (command !is VoiceCommand.ConfirmAction && command !is VoiceCommand.CancelAction) {
+            executeWeChatCallUseCase.cancel()
+        }
+
         viewModelScope.launch {
             Log.d(TAG, "=== executeCommand() 协程开始执行 ===")
             // 处理确认/取消操作
@@ -322,6 +333,8 @@ class HomeViewModel @Inject constructor(
      * 处理取消操作
      */
     private suspend fun handleCancelAction() {
+        executeWeChatCallUseCase.cancel()
+        isAutomationRunning = false
         val pending = _uiState.value.pendingAction
         if (pending == null) {
             speakAndRespond("好的")
@@ -336,50 +349,21 @@ class HomeViewModel @Inject constructor(
      * 需要确认的操作：微信通话
      */
     private suspend fun executeWeChatCallWithConfirm(command: VoiceCommand.WeChatCall) {
-        val callType = if (command.isVideo) "视频" else "语音"
-        val desc = "给${command.contactName}打${callType}电话"
-
-        _uiState.update {
-            it.copy(pendingAction = PendingAction(
-                type = PendingActionType.WECHAT_CALL,
-                command = command,
-                description = desc
-            ))
-        }
-
-        speakAndRespond("您要${desc}，对吗？请说\"是的\"确认，或说\"取消\"")
+        doWeChatCall(command)
     }
 
     /**
      * 需要确认的操作：拨打电话
      */
     private suspend fun executePhoneCallWithConfirm(command: VoiceCommand.PhoneCall) {
-        val desc = "拨打电话${command.phoneNumber}"
-
-        _uiState.update {
-            it.copy(pendingAction = PendingAction(
-                type = PendingActionType.PHONE_CALL,
-                command = command,
-                description = desc
-            ))
-        }
-
-        speakAndRespond("您要${desc}，对吗？请说\"是的\"确认，或说\"取消\"")
+        doPhoneCall(command)
     }
 
     /**
      * 需要确认的操作：叫车
      */
     private suspend fun executeCallTaxiWithConfirm(command: VoiceCommand.CallTaxi) {
-        _uiState.update {
-            it.copy(pendingAction = PendingAction(
-                type = PendingActionType.CALL_TAXI,
-                command = command,
-                description = "叫车"
-            ))
-        }
-
-        speakAndRespond("您要叫车，对吗？请说\"是的\"确认，或说\"取消\"")
+        doCallTaxi()
     }
 
     private suspend fun executeLaunchApp(command: VoiceCommand.LaunchApp) {
@@ -435,6 +419,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun doWeChatCall(command: VoiceCommand.WeChatCall) {
+        isAutomationRunning = true
         _uiState.update { it.copy(isLoading = true) }
         val callType = if (command.isVideo) "视频" else "语音"
         ttsManager.speak("正在帮您给${command.contactName}打${callType}电话，请稍等")
@@ -455,6 +440,7 @@ class HomeViewModel @Inject constructor(
             Log.e(TAG, "微信通话失败", e)
             speakAndRespond("操作失败，请稍后再试")
         } finally {
+            isAutomationRunning = false
             _uiState.update { it.copy(isLoading = false) }
         }
     }

@@ -176,7 +176,7 @@ class VLMService @Inject constructor(
                 add(
                     AutoGlmRequest.Message(
                         role = "system",
-                        content = "你是一个手机屏幕元素定位助手。请根据用户提供的屏幕截图和描述，返回目标元素在屏幕上的坐标。"
+                        content = "你是一个手机屏幕元素定位助手。请根据用户提供的屏幕截图和描述，返回目标元素在屏幕上的归一化坐标。"
                     )
                 )
                 val userContent = listOf(
@@ -188,7 +188,7 @@ class VLMService @Inject constructor(
                     ),
                     AutoGlmRequest.ContentPart(
                         type = "text",
-                        text = "请找到并返回这个元素的坐标：$targetDescription。只返回JSON格式：{\"x\":0.5,\"y\":0.5}"
+                        text = targetDescription
                     )
                 )
                 add(AutoGlmRequest.Message(role = "user", content = userContent))
@@ -211,14 +211,30 @@ class VLMService @Inject constructor(
             val x = json.getDouble("x").toFloat()
             val y = json.getDouble("y").toFloat()
             
-            // 验证坐标范围
-            if (x < 0 || y < 0 || x > 1 || y > 1) {
-                Log.w(TAG, "VLM返回的坐标超出范围: ($x, $y)")
+            val normalizedX: Float
+            val normalizedY: Float
+            
+            if (x > 1.0f || y > 1.0f) {
+                val options = android.graphics.BitmapFactory.Options()
+                options.inJustDecodeBounds = true
+                val imageBytes = android.util.Base64.decode(base64Image, android.util.Base64.DEFAULT)
+                android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, options)
+                val imgWidth = options.outWidth.toFloat()
+                val imgHeight = options.outHeight.toFloat()
+                normalizedX = if (imgWidth > 0) x / imgWidth else x / 720f
+                normalizedY = if (imgHeight > 0) y / imgHeight else y / 1280f
+                Log.d(TAG, "VLM返回绝对坐标($x, $y)，图片尺寸${imgWidth}x${imgHeight}，归一化坐标(${normalizedX}, ${normalizedY})")
+            } else {
+                normalizedX = x
+                normalizedY = y
+            }
+            
+            if (normalizedX < 0 || normalizedY < 0 || normalizedX > 1 || normalizedY > 1) {
+                Log.w(TAG, "VLM返回的坐标超出范围: ($normalizedX, $normalizedY)")
                 return@withContext null
             }
             
-            // 缓存结果
-            val coord = ScreenCoordinate(x, y, 1.0f)
+            val coord = ScreenCoordinate(normalizedX, normalizedY, 1.0f)
             cacheManager.cacheCoordinate(base64Image, targetDescription, coord)
             Log.d(TAG, "VLM找到元素: $targetDescription → ($x, $y)")
             coord

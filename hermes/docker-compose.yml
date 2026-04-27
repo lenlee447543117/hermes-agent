@@ -5,15 +5,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        ZHIPU_API_KEY: ${ZHIPU_API_KEY}
     container_name: hermes-${USER_ID:-default}
     ports:
       - "${HERMES_PORT:-8000}:8000"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY}
+      - GLM_47_API_KEY=${GLM_47_API_KEY}
+      - AUTOGLM_PHONE_API_KEY=${AUTOGLM_PHONE_API_KEY}
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql+asyncpg://hermes:${DB_PASSWORD}@postgres:5432/hermes_${USER_ID:-default}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - USER_ID=${USER_ID:-default}
-      - CLAUDE_MODEL=claude-3-5-sonnet-20241022
+      - GLM_MODEL=${GLM_MODEL:-glm-4.7}
+      - GLM_MAX_TOKENS=${GLM_MAX_TOKENS:-4096}
     depends_on:
       - redis
       - postgres

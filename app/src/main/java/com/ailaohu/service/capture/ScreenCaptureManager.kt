@@ -46,18 +46,45 @@ class ScreenCaptureManager @Inject constructor(
             return null
         }
 
-        return suspendCoroutine { continuation ->
-            val resultCode = savedResultCode ?: return@suspendCoroutine
-            val data = savedData ?: return@suspendCoroutine
-
-            ScreenCaptureService.startCapture(
-                context = context,
-                resultCode = resultCode,
-                data = data,
-                callback = { bitmap ->
-                    continuation.resume(bitmap)
+        val runningInstance = ScreenCaptureService.getRunningInstance()
+        if (runningInstance != null && runningInstance.isProjectionSetup) {
+            return try {
+                withContext(Dispatchers.IO) {
+                    delay(100)
+                    runningInstance.captureScreen()
                 }
-            )
+            } catch (e: Exception) {
+                Log.e(TAG, "直接截图失败: ${e.message}")
+                captureScreenViaService()
+            }
+        }
+
+        return captureScreenViaService()
+    }
+
+    private suspend fun captureScreenViaService(): Bitmap? {
+        return try {
+            suspendCoroutine { continuation ->
+                val resultCode = savedResultCode ?: return@suspendCoroutine
+                val data = savedData ?: return@suspendCoroutine
+
+                ScreenCaptureService.startCapture(
+                    context = context,
+                    resultCode = resultCode,
+                    data = data,
+                    callback = { bitmap ->
+                        if (bitmap == null) {
+                            Log.w(TAG, "截图返回null，清除缓存的MediaProjection token")
+                            clearPermission()
+                        }
+                        continuation.resume(bitmap)
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "captureScreen异常: ${e.message}", e)
+            clearPermission()
+            null
         }
     }
 

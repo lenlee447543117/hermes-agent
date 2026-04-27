@@ -26,10 +26,19 @@ class ExecuteWeChatCallUseCase @Inject constructor(
 ) {
     companion object {
         private const val TAG = "WeChatCall"
-        private const val MAX_VLM_RETRIES = 3
-        private const val SEARCH_INPUT_DELAY = 1500L
-        private const val SEARCH_RESULT_DELAY = 2000L
+        private const val MAX_VLM_RETRIES = 2
+        private const val VLM_RETRY_DELAY = 5000L
+        private const val SEARCH_INPUT_DELAY = 2000L
+        private const val SEARCH_RESULT_DELAY = 2500L
         private const val CALL_CONNECT_DELAY = 3000L
+        private const val MENU_POPUP_DELAY = 2000L
+    }
+
+    private var cancelled = false
+
+    fun cancel() {
+        cancelled = true
+        Log.d(TAG, "微信通话操作被取消")
     }
 
     suspend fun execute(
@@ -38,31 +47,37 @@ class ExecuteWeChatCallUseCase @Inject constructor(
         isVideoCall: Boolean = true,
         childPhoneNumber: String? = null
     ): Boolean {
+        cancelled = false
         hapticManager.mediumFeedback()
         val callType = if (isVideoCall) "视频" else "语音"
         ttsManager.speak("正在帮您联系${contactDisplayName}，请稍等")
 
         try {
+            if (cancelled) return handleCancel()
             if (!checkAndLaunchWeChat()) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "无法启动微信")
             }
             delay(Constants.STEP_DELAY_MEDIUM)
 
+            if (cancelled) return handleCancel()
             if (!clickSearchButton()) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到搜索按钮")
             }
             delay(Constants.STEP_DELAY_SHORT)
 
+            if (cancelled) return handleCancel()
             if (!inputSearchText(contactDisplayName)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "无法输入联系人名称")
             }
             delay(SEARCH_INPUT_DELAY)
 
+            if (cancelled) return handleCancel()
             if (!clickSearchResult(contactDisplayName)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到${contactDisplayName}")
             }
             delay(SEARCH_RESULT_DELAY)
 
+            if (cancelled) return handleCancel()
             if (!clickCallButton(isVideoCall)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到${callType}通话按钮")
             }
@@ -79,6 +94,12 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             Log.e(TAG, "微信通话自动化异常", e)
             return handleFailure(contactDisplayName, childPhoneNumber, "操作异常：${e.message}")
         }
+    }
+
+    private fun handleCancel(): Boolean {
+        Log.d(TAG, "操作已取消")
+        ttsManager.speak("已取消操作")
+        return false
     }
 
     private fun checkAndLaunchWeChat(): Boolean {
@@ -123,7 +144,10 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             return true
         }
 
-        return false
+        Log.w(TAG, "无障碍也未找到搜索，尝试点击右上角区域")
+        AutoPilotService.performClick(0.92f, 0.04f)
+        delay(500)
+        return true
     }
 
     private fun inputSearchText(contactName: String): Boolean {
@@ -164,11 +188,12 @@ class ExecuteWeChatCallUseCase @Inject constructor(
         val plusCoord = findElementWithVlm(PromptBuilder.buildWeChatVideoCallPrompt())
         if (plusCoord != null) {
             clickCoordinate(plusCoord)
-            delay(Constants.STEP_DELAY_SHORT)
+            Log.d(TAG, "已点击加号按钮，等待菜单弹出")
+            delay(MENU_POPUP_DELAY)
         } else {
             Log.w(TAG, "VLM未找到加号按钮，尝试固定位置点击")
             AutoPilotService.performClick(0.92f, 0.92f)
-            delay(Constants.STEP_DELAY_SHORT)
+            delay(MENU_POPUP_DELAY)
         }
 
         val callPrompt = if (isVideoCall) PromptBuilder.buildWeChatVideoCallOptionPrompt()
@@ -187,7 +212,13 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             return true
         }
 
-        return false
+        Log.w(TAG, "无障碍也未找到通话按钮，尝试固定位置点击视频通话")
+        if (isVideoCall) {
+            AutoPilotService.performClick(0.5f, 0.55f)
+        } else {
+            AutoPilotService.performClick(0.5f, 0.65f)
+        }
+        return true
     }
 
     private suspend fun verifyCallConnected(isVideoCall: Boolean): Boolean {
@@ -200,7 +231,7 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             val busyIndicators = listOf("对方忙", "无人接听", "已拒绝", "已取消", "网络异常")
             val isBusy = busyIndicators.any { screenInfo.contains(it) }
             if (isBusy) {
-                val dialectMsg = if (isBusy) "对方暂时无法接听，等一歇再试好伐？" else "呼叫遇到了点问题"
+                val dialectMsg = if (isBusy) "对方暂时无法接听，请稍后再试" else "呼叫遇到了点问题"
                 ttsManager.speak(dialectMsg)
                 AutoPilotService.performBack()
                 return false
@@ -217,26 +248,33 @@ class ExecuteWeChatCallUseCase @Inject constructor(
         }
 
         repeat(MAX_VLM_RETRIES) { attempt ->
+            if (cancelled) return null
             try {
                 val bitmap = screenCaptureManager.captureScreen()
                 if (bitmap == null) {
                     Log.w(TAG, "截屏失败，第${attempt + 1}次重试")
-                    delay(Constants.RETRY_DELAY)
+                    delay(VLM_RETRY_DELAY)
                     return@repeat
                 }
 
                 val base64Image = com.ailaohu.util.BitmapUtils.bitmapToBase64(bitmap, 720, 70)
                 val result = vlmService.findElement(base64Image, prompt)
                 if (result != null) {
-                    Log.d(TAG, "VLM定位成功: prompt=$prompt, coord=(${result.x}, ${result.y})")
+                    Log.d(TAG, "VLM定位成功: coord=(${result.x}, ${result.y})")
                     return result
                 }
 
                 Log.w(TAG, "VLM未找到元素，第${attempt + 1}次重试")
-                delay(Constants.RETRY_DELAY)
+                delay(VLM_RETRY_DELAY)
             } catch (e: Exception) {
                 Log.e(TAG, "VLM查找异常，第${attempt + 1}次: ${e.message}")
-                delay(Constants.RETRY_DELAY)
+                if (e.message?.contains("429") == true) {
+                    val backoffDelay = VLM_RETRY_DELAY * (attempt + 1)
+                    Log.w(TAG, "API限流，等待${backoffDelay}ms后重试")
+                    delay(backoffDelay)
+                } else {
+                    delay(VLM_RETRY_DELAY)
+                }
             }
         }
         return null
@@ -250,7 +288,7 @@ class ExecuteWeChatCallUseCase @Inject constructor(
 
     private fun handleFailure(contactName: String, childPhone: String?, reason: String): Boolean {
         Log.e(TAG, "微信通话失败: $reason")
-        ttsManager.speak("${reason}，正在尝试短信通知")
+        ttsManager.speak("发起视频电话失败，请稍后再试")
         if (!childPhone.isNullOrEmpty()) {
             smsFallbackService.sendSms(
                 childPhone,

@@ -472,7 +472,7 @@ scp /Users/LENLEE/Androidhulao_2.0/hermes-agent-main/.env root@服务器IP:/opt/
 
 # 方式 2：在服务器上直接创建
 cat > /opt/hulao-backend/.env << 'EOF'
-GLM_API_KEY=aca3b118834d4a49bcd6e164c14541ed.0mVW8ntTF7RlvvEl
+GLM_API_KEY=your_glm_api_key_here
 GLM_BASE_URL=https://api.z.ai/api/paas/v4
 API_SERVER_KEY=hulao_2026_secure_api_key_change_in_production
 API_SERVER_ENABLED=true

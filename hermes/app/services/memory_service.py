@@ -41,6 +41,7 @@ class MemoryService:
         count = await self.redis.llen(key)
         if count >= self._summary_threshold:
             logger.info(f"User {user_id} reached summary threshold ({count}), triggering summary")
+            await self._trigger_summary(user_id)
 
     async def get_recent_messages(self, user_id: str, limit: int = 20) -> List[ChatMessage]:
         key = self._key_messages(user_id)
@@ -82,6 +83,20 @@ class MemoryService:
     async def clear_messages(self, user_id: str) -> None:
         key = self._key_messages(user_id)
         await self.redis.delete(key)
+
+    async def _trigger_summary(self, user_id: str) -> None:
+        try:
+            messages = await self.get_recent_messages(user_id, limit=self._summary_threshold)
+            if not messages:
+                return
+            from app.services.glm_service import glm_service
+            summary = await glm_service.summarize_messages(messages)
+            if summary:
+                await self.save_summary(user_id, summary)
+                await self.clear_messages(user_id)
+                logger.info(f"Summary generated for user {user_id}, messages cleared")
+        except Exception as e:
+            logger.error(f"Failed to trigger summary for {user_id}: {e}")
 
 
 memory_service = MemoryService()

@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 
 from app.models.schemas import HabitProfile, DailyReport, ProactiveCareMessage, DialectMode
 from app.services.memory_service import memory_service
-from app.services.claude_service import claude_service
+from app.services.glm_service import glm_service
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class HabitService:
 
         if should_care:
             habit_str = profile.model_dump_json(exclude_none=True)
-            care_result = await claude_service.generate_proactive_care(
+            care_result = await glm_service.generate_proactive_care(
                 habit_profile=habit_str,
                 anomaly_info=anomaly_info,
                 dialect=profile.dialect_preference,
