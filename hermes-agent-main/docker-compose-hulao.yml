@@ -1,0 +1,65 @@
+# =============================================================================
+# AI沪老 2.0 - Docker Compose 生产部署配置
+# =============================================================================
+# 使用方法:
+#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose -f docker-compose-hulao.yml up -d
+#
+# 安全说明:
+#   - API 服务器默认绑定 0.0.0.0（供 Android App 远程访问）
+#   - 必须设置 API_SERVER_KEY 进行认证
+#   - 建议在生产环境使用反向代理（Nginx）+ HTTPS
+# =============================================================================
+
+services:
+  # =========================================================================
+  # Hermes Gateway - 核心后端服务
+  # =========================================================================
+  gateway:
+    build: .
+    image: hermes-agent:hulao
+    container_name: hulao-gateway
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+      # API 服务器配置（供 Android App 调用）
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${API_SERVER_KEY:-hulao_2026_secure_api_key_change_in_production}
+      # 智谱 AI 配置
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://api.z.ai/api/paas/v4}
+      # 时区
+      - HERMES_TIMEZONE=Asia/Shanghai
+      # 安全配置
+      - HERMES_REDACT_SECRETS=true
+    command: ["gateway", "run"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =========================================================================
+  # Hermes Dashboard - Web 管理面板（可选）
+  # =========================================================================
+  dashboard:
+    build: .
+    image: hermes-agent:hulao
+    container_name: hulao-dashboard
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
+    profiles:
+      - dashboard

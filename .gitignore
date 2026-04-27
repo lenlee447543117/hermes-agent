@@ -1,63 +1,24 @@
-# IDE 配置
-*.iml
-.idea/
-.gradle/
+# AI沪老 项目专用忽略规则
+hermes-home/
 
-# 构建输出
-build/
-captures/
-.externalNativeBuild
-.cxx/
-app/build/
-*.apk
-*.ap_
-*.aab
-
-# 本地配置（包含密钥！）
-local.properties
-hermes/.env
+# 原有配置
+.DS_Store
+/venv/
+/_pycache/
+*.pyc*
+__pycache__/
+.venv/
+.vscode/
 .env
-
-# 系统文件
-.DS_Store
-Thumbs.db
-
-# 日志文件
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# 依赖目录
-node_modules/
-
-# 临时文件
-*.tmp
-*.temp
-*.swp
-*.swo
-
-# 操作系统文件
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-
-# 测试覆盖率
-coverage/
-.nyc_output/
-
-# 打包输出
-dist/
-out/
-
-# 临时测试文件
-test_screenshots/
-screen_current.png
-*.html
-
-# 临时文档
-*_副本.txt
-*_备份.txt
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.development
+.env.test
+export*
+logs/
+data/
+.pytest_cache/
+tmp/
+temp_vision_images/
