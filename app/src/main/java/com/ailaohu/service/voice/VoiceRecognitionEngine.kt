@@ -124,6 +124,7 @@ class VoiceRecognitionEngine @Inject constructor(
     private var onEndCallback: (() -> Unit)? = null
     private var onStateChangedCallback: ((Boolean) -> Unit)? = null
     private var onVoicePackMissingCallback: (() -> Unit)? = null
+    private var onMicReadyCallback: (() -> Unit)? = null
     private var onAudioFileReadyCallback: ((File) -> Unit)? = null // 新回调：音频文件准备好
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -556,7 +557,8 @@ class VoiceRecognitionEngine @Inject constructor(
         onEnd: (() -> Unit)? = null,
         onStateChanged: ((Boolean) -> Unit)? = null,
         onVoicePackMissing: (() -> Unit)? = null,
-        onAudioFileReady: ((File) -> Unit)? = null
+        onAudioFileReady: ((File) -> Unit)? = null,
+        onMicReady: (() -> Unit)? = null
     ) {
         onReadyCallback = onReady
         onResultCallback = onResult
@@ -566,6 +568,7 @@ class VoiceRecognitionEngine @Inject constructor(
         onStateChangedCallback = onStateChanged
         onVoicePackMissingCallback = onVoicePackMissing
         onAudioFileReadyCallback = onAudioFileReady
+        onMicReadyCallback = onMicReady
 
         // 防止初始化测试死循环
         if (isEngineTesting) {
@@ -945,6 +948,7 @@ class VoiceRecognitionEngine @Inject constructor(
                                         listeningStartTime = SystemClock.elapsedRealtime()
                                         onStateChangedCallback?.invoke(true)
                                         onReadyCallback?.invoke()
+                                        onMicReadyCallback?.invoke()
                                         mainHandler.postDelayed(maxRecordingRunnable, maxRecordingDurationMs)
                                         Log.d(TAG, "✅ 智谱云端识别录音已成功启动！")
                                     } else {

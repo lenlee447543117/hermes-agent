@@ -215,7 +215,6 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
                         }
                         VoicePipelineState.LISTENING -> {
                             viewModel.onVoiceStateChanged(VoiceState.LISTENING)
-                            voiceFeedbackPlayer.playStartTone()
                         }
                         VoicePipelineState.PROCESSING -> {
                             viewModel.onVoiceStateChanged(VoiceState.PROCESSING)
@@ -536,6 +535,11 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
                         voiceStateMachine.speakAndWait(getVoicePackDownloadGuide())
                         voiceRecognitionEngine.openVoicePackDownloadPage()
                     }
+                }
+            },
+            onMicReady = {
+                runOnUiThread {
+                    voiceFeedbackPlayer.playStartTone()
                 }
             }
         )
