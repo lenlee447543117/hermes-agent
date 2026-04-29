@@ -1,128 +1,211 @@
-# AI 沪老 V1.0 实施计划（开发团队版）
+# AI 沪老 V2.1 实施计划（开发团队版）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 构建一款面向75岁以上高龄老人的适老化Android App，通过AI视觉自动化技术和语音调用AutoGLM实现微信视频通话代操作和助老打车呼叫。
+**Goal:** 构建一款面向75岁以上高龄老人的适老化Android App，通过AI视觉自动化技术和语音调用AutoGLM实现微信视频通话代操作和助老打车呼叫。V2.1在V1.0基础上引入Hermes边缘智能体架构、端云协同执行引擎、隐私脱敏保护墙，实现从被动工具到主动陪伴的跃迁。
 
-**Architecture:** 采用**"感知-决策-执行（Sense-Think-Act）闭环架构"**，通过分层解耦设计，确保每一层都能独立迭代。用户通过语音指令唤醒AutoGLM，AutoGLM解析用户意图后，系统级操作（拨打电话）通过Android原生Intent实现100%成功率；复杂第三方App操作（微信）通过AccessibilityService截屏→Qwen-VL-Max识别→AutoGLM指令执行坐标点击实现。前端采用Apple式禅意适老化设计，暖米色背景+明亮橙色核心交互色。
+**Architecture:** 采用**"感知-决策-执行（Sense-Think-Act）闭环架构"**，通过分层解耦设计，确保每一层都能独立迭代。V2.1架构升级为**Android感知外壳 + Termux/Hermes边缘中枢 + 云端推理**三层协同：
 
-### 核心层级设计
+```
+┌────────────────────────────────────────────────────┐
+│                    Android 手机                      │
+│  ┌──────────────────────────────────────────────┐  │
+│  │         感知外壳 (Android Native App)         │  │
+│  │  • 暖阳橙 UI / 机器人动画                     │  │
+│  │  • Vosk 离线语音 + 智谱云端 ASR               │  │
+│  │  • AccessibilityService 自动化引擎            │  │
+│  │  • MediaProjection 截屏 + 隐私脱敏            │  │
+│  │  • 悬浮窗打断、震动/语音反馈                  │  │
+│  └──────────────┬───────────────────────────────┘  │
+│                 │ HTTP (127.0.0.1:8000)             │
+│  ┌──────────────▼───────────────────────────────┐  │
+│  │         Termux - Hermes Edge (Python)         │  │
+│  │  • FastAPI 边缘服务                            │  │
+│  │  • uiautomator2 自动化引擎 (无线ADB)          │  │
+│  │  • SQLite 记忆库 + 动作缓存                    │  │
+│  │  • 隐私脱敏 (PaddleOCR + 黑块填充)            │  │
+│  │  • 本地意图解析 (离线规则)                     │  │
+│  │  • 云端代理 (AutoGLM / VLM)                   │  │
+│  └──────────────┬───────────────────────────────┘  │
+│                 │ HTTPS (按需)                      │
+└─────────────────┼──────────────────────────────────┘
+                  │
+          ┌───────▼────────┐
+          │   云端服务       │
+          │ • AutoGLM 推理  │
+          │ • VLM 视觉定位  │
+          │ • 模型更新下发   │
+          └────────────────┘
+```
 
-- **感知层（Perception）：** 负责语音采集（ASR）及屏幕图像获取（MediaProjection）
-- **认知层（Cognition - The Brain）：** 集成AutoGLM协议，将用户意图转化为操作步骤指令流
-- **执行层（Execution - The Hands）：** 将指令流映射为具体的物理操作（点击、滑动、输入）
-- **管控层（Governance）：** 负责权限保活、冲突处理及安全监控
+### 核心层级设计（V2.1升级版）
 
-**Tech Stack:** Kotlin 1.9.20, Android SDK 34 (min 26), Hilt 2.48, Retrofit 2.9.0, OkHttp 4.11.0, kotlinx-coroutines 1.7.3, AutoGLM API, Qwen-VL-Max API, Azure TTS (Xiaoxiao), 阿里云OSS
+- **感知层（Perception）：** 双引擎语音采集（Vosk离线唤醒 + 智谱云端ASR）及屏幕图像获取（MediaProjection + OpenCV隐私脱敏）
+- **认知层（Cognition - The Brain）：** 三级意图解析（本地动作缓存→离线规则匹配→云端AutoGLM推理），将用户意图转化为操作步骤指令流
+- **执行层（Execution - The Hands）：** 三策略降级执行（无障碍节点查找→VLM视觉定位→固定坐标兜底），将指令流映射为具体的物理操作（点击、滑动、输入）
+- **管控层（Governance）：** 负责权限保活（ForegroundService+JobScheduler双保活）、冲突处理（单线程串行队列+新指令中断旧指令）及安全监控（端侧隐私脱敏+异常方言安抚）
+
+### 数据流闭环
+
+```
+用户语音 → Vosk/智谱ASR → 文本意图 → 本地缓存/规则/AutoGLM → 结构化JSON指令
+    → AccessibilityService节点查找 → (失败)VLM截图识别 → (失败)固定坐标点击
+    → 状态反馈 → 方言语音播报
+```
+
+**Tech Stack:** Kotlin 1.9.20, Android SDK 34 (min 26), Hilt 2.48, Retrofit 2.9.0, OkHttp 4.11.0, kotlinx-coroutines 1.7.3, Jetpack Compose, Supabase (BaaS), AutoGLM API, Qwen-VL-Max API, 智谱ASR (glm-asr), Azure TTS (Xiaoxiao), 阿里云OSS
 
 ---
 
-## 文件结构总览
+## 文件结构总览（V2.1实际代码库）
 
 ```
 app/src/main/
 ├── java/com/ailaohu/
 │   ├── AILaoHuoApplication.kt              # Application入口，Hilt初始化
 │   ├── di/
-│   │   ├── NetworkModule.kt                # 网络依赖注入（Retrofit, OkHttp, VLM API）
-│   │   ├── ServiceModule.kt                # 服务依赖注入（Accessibility, TTS, Repository）
-│   │   └── DatabaseModule.kt               # 本地数据库依赖注入（Room）
+│   │   ├── NetworkModule.kt                # 网络依赖注入（Retrofit, OkHttp, VLM, Hermes API）
+│   │   └── ServiceModule.kt                # 服务依赖注入（Accessibility, TTS, Repository）
 │   ├── data/
 │   │   ├── local/
 │   │   │   ├── db/
 │   │   │   │   ├── AppDatabase.kt          # Room数据库定义
-│   │   │   │   ├── ContactDao.kt           # 联系人数据访问对象
-│   │   │   │   └── OperationLogDao.kt      # 操作日志数据访问对象
+│   │   │   │   └── ContactDao.kt           # 联系人数据访问对象
 │   │   │   ├── entity/
-│   │   │   │   ├── ContactEntity.kt        # 联系人实体（微信备注名+磁贴绑定）
-│   │   │   │   └── OperationLogEntity.kt   # 操作日志实体
+│   │   │   │   └── ContactEntity.kt        # 联系人实体（微信备注名+磁贴绑定）
 │   │   │   └── prefs/
-│   │   │       └── AppPreferences.kt       # SharedPreferences封装（首次启动、权限状态）
+│   │   │       └── AppPreferences.kt       # SharedPreferences封装
 │   │   ├── remote/
 │   │   │   ├── api/
-│   │   │   │   ├── VlmApiService.kt        # Qwen-VL-Max API接口定义
+│   │   │   │   ├── AutoGlmApiService.kt    # AutoGLM API接口定义
+│   │   │   │   ├── HermesApiService.kt     # Hermes边缘服务API接口
+│   │   │   │   ├── HermesCronApiService.kt # Hermes定时任务API接口
 │   │   │   │   ├── SmsApiService.kt        # 短信告警API接口定义
-│   │   │   │   └── OssApiService.kt        # OSS上传接口定义
+│   │   │   │   └── VlmApiService.kt        # VLM视觉定位API接口定义
 │   │   │   └── dto/
+│   │   │       ├── hermes/
+│   │   │       │   ├── CronDto.kt          # 定时任务DTO
+│   │   │       │   └── HermesDto.kt        # Hermes通信DTO
+│   │   │       ├── AutoGlmDto.kt           # AutoGLM请求/响应DTO
 │   │   │       ├── VlmRequest.kt           # VLM请求体DTO
-│   │   │       ├── VlmResponse.kt          # VLM响应体DTO
-│   │   │       └── SmsRequest.kt           # 短信请求体DTO
+│   │   │       └── VlmResponse.kt          # VLM响应体DTO
 │   │   └── repository/
 │   │       ├── ContactRepository.kt        # 联系人数据仓库
-│   │       └── AutomationRepository.kt     # 自动化操作仓库
+│   │       └── HermesRepository.kt         # Hermes边缘服务仓库
 │   ├── domain/
 │   │   ├── model/
-│   │   │   ├── Contact.kt                  # 联系人领域模型
-│   │   │   ├── UserIntent.kt               # 用户意图枚举（VIDEO_CALL, VOICE_CALL, TAXI等）
 │   │   │   ├── AutomationStep.kt           # 自动化步骤模型
-│   │   │   └── ScreenState.kt              # 屏幕状态枚举（WECHAT_HOME, SEARCH, CHAT等）
+│   │   │   ├── ScreenState.kt             # 屏幕状态枚举
+│   │   │   └── UserIntent.kt              # 用户意图枚举
 │   │   └── usecase/
-│   │       ├── ParseUserIntentUseCase.kt   # 解析用户语音/文字意图
-│   │       ├── ExecuteWeChatCallUseCase.kt # 执行微信通话自动化
-│   │       └── CallTaxiUseCase.kt          # 执行打车呼叫
+│   │       ├── CallTaxiUseCase.kt          # 执行打车呼叫
+│   │       ├── ExecuteWeChatCallUseCase.kt # 执行微信通话自动化（核心）
+│   │       ├── MedicineReminderUseCase.kt  # 吃药提醒用例
+│   │       ├── NewsInfoUseCase.kt          # 新闻资讯用例
+│   │       └── WeatherInfoUseCase.kt       # 天气查询用例
 │   ├── service/
 │   │   ├── accessibility/
-│   │   │   ├── AutoPilotService.kt         # 无障碍服务核心（手势分发+节点查找）
+│   │   │   ├── AutoPilotService.kt         # 无障碍服务核心（手势分发+节点查找+手势兜底）
 │   │   │   ├── AccessibilityHelper.kt      # 无障碍辅助工具类
-│   │   │   └── NodeFinder.kt              # 节点查找策略（文本匹配+ID匹配）
+│   │   │   └── NodeFinder.kt              # 节点查找策略（文本+描述+资源ID匹配）
 │   │   ├── capture/
-│   │   │   ├── ScreenCaptureService.kt     # MediaProjection截屏服务（Android 14适配）
-│   │   │   └── ScreenCaptureManager.kt     # 截屏管理器（Bitmap获取+压缩）
+│   │   │   ├── ScreenCaptureManager.kt     # 截屏管理器（Bitmap获取+压缩+权限管理）
+│   │   │   ├── ScreenCapturePermissionManager.kt # 截屏权限管理
+│   │   │   └── ScreenCaptureService.kt     # MediaProjection截屏服务
 │   │   ├── vlm/
-│   │   │   ├── VLMService.kt              # VLM核心服务（截图→Base64→API→坐标）
-│   │   │   ├── VLMCacheManager.kt          # VLM结果缓存（减少API调用）
+│   │   │   ├── VLMService.kt             # VLM核心服务（截图→Base64→API→坐标）
+│   │   │   ├── VLMCacheManager.kt         # VLM结果缓存（减少API调用）
 │   │   │   └── PromptBuilder.kt           # Prompt工程（不同场景的Prompt模板）
-│   │   ├── autoglm/
-│   │   │   ├── AutoGLMService.kt          # AutoGLM核心服务（语音指令解析→意图执行）
-│   │   │   ├── VoiceRecognitionManager.kt # 语音识别管理器
-│   │   │   └── IntentParser.kt            # 用户意图解析器
+│   │   ├── voice/
+│   │   │   ├── VoiceRecognitionEngine.kt  # 语音识别引擎（Vosk离线+智谱云端双引擎）
+│   │   │   ├── VoiceCommandParser.kt      # 语音指令解析器（意图识别+联系人提取）
+│   │   │   ├── VoiceCommandBridge.kt      # AutoGLM指令桥接（结构化响应解析）
+│   │   │   ├── AutoGLMExecutor.kt         # AutoGLM执行器（非结构化do()格式解析）
+│   │   │   ├── VoiceFloatingService.kt    # 悬浮窗语音交互服务
+│   │   │   ├── VoiceStateMachine.kt       # 语音状态机（IDLE→LISTENING→PROCESSING→EXECUTING）
+│   │   │   ├── VoiceFeedbackPlayer.kt     # 语音反馈音效播放器
+│   │   │   ├── ZhipuAsrService.kt         # 智谱云端ASR服务（glm-asr）
+│   │   │   ├── VoskSpeechService.kt       # Vosk离线语音识别服务
+│   │   │   ├── ResilientMicManager.kt     # 麦克风资源管理器（三级防御）
+│   │   │   ├── SmartAudioRecorder.kt      # 智能录音器
+│   │   │   ├── CommandNormalizer.kt       # 指令归一化处理器
+│   │   │   ├── MultiStepTaskHandler.kt    # 多步骤任务分解处理器
+│   │   │   └── WakeUpService.kt           # 唤醒词服务
 │   │   ├── tts/
-│   │   │   └── TTSManager.kt              # TTS语音播报管理器
-│   │   ├── overlay/
-│   │   │   └── OverlayManager.kt          # 悬浮窗蒙层管理（防误触+状态提示）
+│   │   │   └── TTSManager.kt             # TTS语音播报管理器
+│   │   ├── care/
+│   │   │   └── ProactiveCareService.kt    # 主动关怀服务
+│   │   ├── chat/
+│   │   │   └── ChatService.kt            # AI对话服务
+│   │   ├── config/
+│   │   │   └── SyncConfigService.kt       # 子女远程配置同步服务
+│   │   ├── dialect/
+│   │   │   ├── DialectManager.kt          # 方言管理器（上海话+普通话双模）
+│   │   │   └── InteractionModeDetector.kt  # 交互模式检测器（指令/闲聊）
+│   │   ├── face/
+│   │   │   └── FaceDetectionManager.kt    # 人脸检测管理器
+│   │   ├── habit/
+│   │   │   └── HabitTrackingService.kt    # 用户习惯画像服务
+│   │   ├── privacy/
+│   │   │   └── PrivacyFilterService.kt    # 端侧隐私脱敏服务
+│   │   ├── sms/
+│   │   │   └── SmsFallbackService.kt      # 短信兜底告警服务
+│   │   ├── termux/
+│   │   │   └── TermuxBridge.kt           # Termux通信桥接
+│   │   ├── vla/
+│   │   │   └── VlaExecutionEngine.kt      # VLA视觉反馈闭环执行引擎
 │   │   ├── watchdog/
 │   │   │   └── WatchdogService.kt         # 权限保活守护进程
-│   │   └── sms/
-│   │       └── SmsFallbackService.kt      # 短信兜底告警服务
+│   │   └── audio/
+│   │       └── AudioManagerHelper.kt      # 音频管理辅助
 │   ├── ui/
 │   │   ├── home/
-│   │   │   ├── HomeActivity.kt            # 首页Activity
-│   │   │   ├── HomeViewModel.kt           # 首页ViewModel
-│   │   │   └── adapters/
-│   │   │       └── FunctionTileAdapter.kt # 功能磁贴适配器
-│   │   ├── chat/
-│   │   │   ├── AiChatFragment.kt          # AI对话窗Fragment
-│   │   │   └── AiChatViewModel.kt         # AI对话ViewModel
+│   │   │   ├── HomeActivity.kt            # 首页Activity（语音交互+权限管理）
+│   │   │   ├── HomeViewModel.kt           # 首页ViewModel（指令分发+自动化控制）
+│   │   │   ├── HomeScreen.kt             # 首页Compose UI
+│   │   │   ├── mvi/
+│   │   │   │   ├── CommandProcessor.kt    # 指令处理器
+│   │   │   │   ├── HomeViewEffect.kt      # 副作用定义
+│   │   │   │   ├── HomeViewEvent.kt       # 事件定义
+│   │   │   │   └── HomeViewState.kt       # 状态定义
+│   │   │   └── FaceDetectionManager.kt    # 人脸检测管理
+│   │   ├── settings/
+│   │   │   ├── SettingsActivity.kt        # 设置Activity
+│   │   │   ├── SettingsScreen.kt          # 设置Compose UI
+│   │   │   └── SettingsViewModel.kt       # 设置ViewModel
 │   │   ├── setup/
 │   │   │   ├── PermissionGuideActivity.kt # 权限引导Activity
-│   │   │   ├── ContactBindingActivity.kt  # 联系人绑定Activity
-│   │   │   └── SetupWizardActivity.kt     # 初始化向导Activity
+│   │   │   ├── PermissionGuideScreen.kt   # 权限引导Compose UI
+│   │   │   └── OptimizedPermissionGuideScreen.kt # 优化版权限引导
+│   │   ├── components/
+│   │   │   ├── FunctionTile.kt           # 功能磁贴组件
+│   │   │   └── PetCharacter.kt           # 宠物AI助手组件
 │   │   └── theme/
-│   │       ├── Color.kt                   # 适老化色彩定义
-│   │       ├── Type.kt                    # 字体大小定义
-│   │       └── Theme.kt                   # Material3主题配置
+│   │       ├── Colors.kt                 # 适老化色彩定义
+│   │       ├── Theme.kt                  # Material3主题配置
+│   │       └── Typography.kt             # 字体大小定义
+│   ├── debug/
+│   │   ├── PerformanceMetrics.kt         # 性能指标采集
+│   │   └── TroubleshootingChecker.kt     # 故障排查检查器
 │   └── util/
-│       ├── BitmapUtils.kt                 # Bitmap→Base64转换工具
-│       ├── HapticManager.kt              # 触觉反馈管理器
-│       ├── NetworkMonitor.kt             # 网络状态监听
-│       └── Constants.kt                   # 全局常量定义
+│       ├── BitmapUtils.kt                # Bitmap→Base64转换工具（720p+70%压缩）
+│       ├── HapticManager.kt             # 触觉反馈管理器
+│       ├── NetworkMonitor.kt            # 网络状态监听
+│       ├── Constants.kt                  # 全局常量定义
+│       ├── SoundEffectManager.kt         # 音效管理器
+│       └── WavRecorder.kt               # WAV录音工具
 ├── res/
 │   ├── xml/
 │   │   └── accessibility_service_config.xml  # 无障碍服务配置
-│   ├── values/
-│   │   ├── colors.xml                    # 色彩资源
-│   │   ├── dimens.xml                    # 尺寸资源
-│   │   ├── strings.xml                   # 字符串资源
-│   │   └── themes.xml                    # 主题配置
-│   ├── layout/
-│   │   ├── activity_home.xml             # 首页布局
-│   │   ├── fragment_ai_chat.xml          # AI对话窗布局
-│   │   ├── activity_permission_guide.xml # 权限引导布局
-│   │   ├── activity_contact_binding.xml  # 联系人绑定布局
-│   │   └── activity_setup_wizard.xml     # 初始化向导布局
-│   └── drawable/
-│       └── ...                           # 图标与背景资源
+│   └── ...
 └── AndroidManifest.xml
+
+hermes-agent-main/                          # Hermes边缘智能体后端
+├── gateway/
+│   └── platforms/
+│       └── api_server.py                  # FastAPI边缘服务（语音/状态/取消接口）
+├── config.yaml                            # Hermes配置文件（模型/端口/密钥）
+└── ...
 ```
 
 ---
@@ -4386,6 +4469,7 @@ object KPIVerifier {
 | V1.0 | 2026-04-16 | 项目经理 | 初始版本，完整实施计划 |
 | V1.1 | 2026-04-18 | 产品架构师 | 更新为"感知-决策-执行"闭环架构，新增附录A技术实现细节 |
 | V1.2 | 2026-04-19 | 产品文档经理 | 根据实际代码实现更新文档，包括首页设计、语音识别、VLM服务、无障碍服务等模块 |
+| V2.1 | 2026-04-30 | 产品文档经理 | 根据解决方案.md全面升级：1)架构升级为Android+Termux/Hermes三层协同 2)文件结构对齐实际代码库 3)执行策略对齐三策略降级(无障碍→VLM→固定坐标) 4)新增V2.1模块(Hermes边缘服务/隐私脱敏/VLA视觉闭环/方言双模/习惯画像/Termux桥接) 5)更新KPI指标 6)数据流闭环图 |
 
 ---
 

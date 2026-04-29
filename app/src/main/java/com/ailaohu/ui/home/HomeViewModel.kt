@@ -23,6 +23,8 @@ import com.ailaohu.domain.usecase.ExecuteWeChatCallUseCase
 import com.ailaohu.domain.usecase.WeatherInfoUseCase
 import com.ailaohu.domain.usecase.NewsInfoUseCase
 import com.ailaohu.domain.usecase.MedicineReminderUseCase
+import com.ailaohu.service.hermes.AgentState
+import com.ailaohu.service.hermes.HermesClient
 import com.ailaohu.service.termux.TermuxBridge
 import com.ailaohu.service.termux.TermuxCommand
 import com.ailaohu.service.chat.ChatService
@@ -85,7 +87,9 @@ data class HomeUiState(
     val isContinuousListening: Boolean = false,
     val pendingAction: PendingAction? = null,
     val isEmergencyActive: Boolean = false,
-    val hasNewNotification: Boolean = false
+    val hasNewNotification: Boolean = false,
+    val agentState: AgentState = AgentState.IDLE,
+    val currentTaskId: String = ""
 ) {
     fun isSameSignificantState(other: HomeUiState): Boolean {
         return voiceState == other.voiceState &&
@@ -112,6 +116,7 @@ class HomeViewModel @Inject constructor(
     private val newsInfoUseCase: NewsInfoUseCase,
     private val medicineReminderUseCase: MedicineReminderUseCase,
     private val termuxBridge: TermuxBridge,
+    private val hermesClient: HermesClient,
     private val appPreferences: AppPreferences,
     private val networkMonitor: NetworkMonitor,
     private val ttsManager: TTSManager,
@@ -177,6 +182,21 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             proactiveCareService.careMessageFlow.collect { care: com.ailaohu.data.remote.dto.hermes.HermesCareMessage ->
                 _uiState.update { it.copy(responseText = care.message) }
+            }
+        }
+
+        viewModelScope.launch {
+            while (true) {
+                try {
+                    val status = hermesClient.getAgentStatus()
+                    _uiState.update {
+                        it.copy(
+                            agentState = status.state,
+                            currentTaskId = status.currentTaskId
+                        )
+                    }
+                } catch (_: Exception) {}
+                kotlinx.coroutines.delay(5000)
             }
         }
     }
@@ -1129,6 +1149,14 @@ class HomeViewModel @Inject constructor(
     fun onEmergencyClicked() {
         viewModelScope.launch {
             executeEmergencySOS(VoiceCommand.EmergencySOS("手动触发"))
+        }
+    }
+
+    fun cancelCurrentTask() {
+        viewModelScope.launch {
+            val taskId = _uiState.value.currentTaskId
+            hermesClient.cancelTask(taskId)
+            _uiState.update { it.copy(agentState = AgentState.IDLE, currentTaskId = "") }
         }
     }
 
