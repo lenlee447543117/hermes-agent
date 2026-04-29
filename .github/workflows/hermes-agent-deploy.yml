@@ -10,6 +10,7 @@ on:
       - "hermes-agent-main/pyproject.toml"
       - "hermes-agent-main/uv.lock"
       - ".github/workflows/hermes-agent-deploy.yml"
+  workflow_dispatch:
 
 env:
   DOCKER_PLATFORM: linux/amd64
