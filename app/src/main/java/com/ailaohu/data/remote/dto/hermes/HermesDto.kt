@@ -33,7 +33,10 @@ data class HermesRobotUiState(
 data class HermesActionPayload(
     val intent: String,
     val target_person: String? = null,
-    val parameters: Map<String, @JvmSuppressWildcards Any>? = null
+    val parameters: Map<String, @JvmSuppressWildcards Any>? = null,
+    val medicine_name: String? = null,
+    val dosage: String? = null,
+    val time: String? = null
 )
 
 data class HermesActionRequest(
