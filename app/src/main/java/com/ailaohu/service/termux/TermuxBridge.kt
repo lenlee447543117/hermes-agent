@@ -7,23 +7,33 @@ import com.ailaohu.BuildConfig
 import com.ailaohu.data.local.prefs.AppPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+
+enum class AgentState {
+    IDLE,
+    LISTENING,
+    THINKING,
+    EXECUTING,
+    SUCCESS,
+    ERROR
+}
 
 data class TermuxCommandResult(
     val success: Boolean,
     val output: String = "",
     val error: String? = null,
-    val mode: String = "",
+    val status: String = "",
     val intent: String = "",
     val source: String = "",
+    val taskId: String = "",
     val clarification: JSONObject? = null
 )
 
@@ -32,10 +42,11 @@ data class TermuxCommand(
     val params: Map<String, String> = emptyMap()
 )
 
-data class AgentStatus(
+data class AgentStatusInfo(
+    val state: AgentState = AgentState.IDLE,
     val deviceConnected: Boolean = false,
+    val currentTaskId: String = "",
     val voskAvailable: Boolean = false,
-    val voskModel: String = "",
     val autoglmAvailable: Boolean = false,
     val privacyFilterAvailable: Boolean = false,
     val memoryContacts: Int = 0,
@@ -53,7 +64,7 @@ class TermuxBridge @Inject constructor(
         private const val TAG = "TermuxBridge"
         private const val TERMUX_API_PACKAGE = "com.termux.api"
         private const val TERMUX_API_RECEIVER = "com.termux.api.TermuxApiReceiver"
-        private const val HERMES_AGENT_URL = "http://127.0.0.1:8000"
+        private const val LOCAL_AGENT_URL = "http://127.0.0.1:8000"
 
         private val ALLOWED_COMMANDS = setOf(
             "VOLUME", "CAMERA", "NOTIFICATION", "TTS_SPEAK", "TTS_STOP",
@@ -66,6 +77,9 @@ class TermuxBridge @Inject constructor(
             "dd if=", "mkfs", "format", "factory", "reset",
             "/system/", "/data/", "pm uninstall", "pm clear"
         )
+
+        private const val TASK_POLL_INTERVAL_MS = 500L
+        private const val TASK_POLL_MAX_ATTEMPTS = 60
     }
 
     private val httpClient: OkHttpClient by lazy {
@@ -77,12 +91,8 @@ class TermuxBridge @Inject constructor(
 
     suspend fun isTermuxAvailable(): Boolean = withContext(Dispatchers.IO) {
         try {
-            val intent = Intent()
-            intent.setClassName(TERMUX_API_PACKAGE, TERMUX_API_RECEIVER)
-            context.packageManager.getReceiverInfo(
-                android.content.ComponentName(TERMUX_API_PACKAGE, TERMUX_API_RECEIVER),
-                0
-            )
+            val componentName = android.content.ComponentName(TERMUX_API_PACKAGE, TERMUX_API_RECEIVER)
+            context.packageManager.getReceiverInfo(componentName, 0)
             true
         } catch (e: Exception) {
             Log.w(TAG, "Termux:API not available: ${e.message}")
@@ -90,30 +100,32 @@ class TermuxBridge @Inject constructor(
         }
     }
 
-    suspend fun isHermesAgentRunning(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun isAgentRunning(): Boolean = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder()
-                .url("$HERMES_AGENT_URL/health")
-                .build()
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful
-        } catch (e: Exception) {
+            val request = Request.Builder().url("$LOCAL_AGENT_URL/health").build()
+            httpClient.newCall(request).execute().isSuccessful
+        } catch (_: Exception) {
             false
         }
     }
 
-    suspend fun getAgentStatus(): AgentStatus = withContext(Dispatchers.IO) {
+    suspend fun getAgentStatus(): AgentStatusInfo = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
-                .url("$HERMES_AGENT_URL/api/v1/status")
+                .url("$LOCAL_AGENT_URL/api/v1/status")
                 .build()
             val response = httpClient.newCall(request).execute()
             if (response.isSuccessful) {
                 val json = JSONObject(response.body?.string() ?: "")
-                AgentStatus(
+                AgentStatusInfo(
+                    state = try {
+                        AgentState.valueOf(json.optString("state", "IDLE"))
+                    } catch (_: Exception) {
+                        AgentState.IDLE
+                    },
                     deviceConnected = json.optBoolean("device_connected", false),
+                    currentTaskId = json.optString("current_task_id", ""),
                     voskAvailable = json.optBoolean("vosk_available", false),
-                    voskModel = json.optString("vosk_model", ""),
                     autoglmAvailable = json.optBoolean("autoglm_available", false),
                     privacyFilterAvailable = json.optBoolean("privacy_filter_available", false),
                     memoryContacts = json.optInt("memory_contacts", 0),
@@ -122,88 +134,15 @@ class TermuxBridge @Inject constructor(
                     version = json.optString("version", "")
                 )
             } else {
-                AgentStatus()
+                AgentStatusInfo()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Get agent status failed: ${e.message}")
-            AgentStatus()
+            AgentStatusInfo()
         }
     }
 
-    fun executeCommand(command: TermuxCommand): TermuxCommandResult {
-        if (!ALLOWED_COMMANDS.contains(command.action)) {
-            return TermuxCommandResult(
-                success = false,
-                error = "Command not allowed: ${command.action}"
-            )
-        }
-
-        for (param in command.params.values) {
-            for (pattern in DANGEROUS_PATTERNS) {
-                if (param.contains(pattern, ignoreCase = true)) {
-                    return TermuxCommandResult(
-                        success = false,
-                        error = "Dangerous pattern detected: $pattern"
-                    )
-                }
-            }
-        }
-
-        return try {
-            val intent = buildTermuxIntent(command)
-            context.sendBroadcast(intent)
-            Log.d(TAG, "Command executed: ${command.action}")
-            TermuxCommandResult(success = true, output = "Command sent")
-        } catch (e: Exception) {
-            Log.e(TAG, "Command failed: ${command.action}", e)
-            TermuxCommandResult(success = false, error = e.message)
-        }
-    }
-
-    suspend fun executeViaAgent(prompt: String): TermuxCommandResult =
-        withContext(Dispatchers.IO) {
-            try {
-                val userId = appPreferences.userId.first()
-                val requestBody = JSONObject().apply {
-                    put("user_id", userId)
-                    put("message", prompt)
-                    put("dialect", "shanghai")
-                }
-
-                val request = Request.Builder()
-                    .url("$HERMES_AGENT_URL/api/v1/chat")
-                    .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
-                    .addHeader("Content-Type", "application/json")
-                    .post(requestBody.toString().toRequestBody())
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                val body = response.body?.string() ?: ""
-
-                if (response.isSuccessful) {
-                    val json = JSONObject(body)
-                    val reply = json.optString("reply", "")
-                    val mode = json.optString("mode", "")
-                    val intentName = json.optString("intent", "")
-                    val source = json.optString("source", "")
-                    val clarification = json.optJSONObject("clarification")
-                    TermuxCommandResult(
-                        success = true, output = reply, mode = mode,
-                        intent = intentName, source = source, clarification = clarification
-                    )
-                } else {
-                    TermuxCommandResult(
-                        success = false,
-                        error = "Agent returned ${response.code}: $body"
-                    )
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Agent execution failed", e)
-                TermuxCommandResult(success = false, error = e.message)
-            }
-        }
-
-    suspend fun executeVoiceCommand(text: String, dialect: String = "shanghai"): TermuxCommandResult =
+    suspend fun sendVoiceCommand(text: String, dialect: String = "shanghai"): TermuxCommandResult =
         withContext(Dispatchers.IO) {
             try {
                 val userId = appPreferences.userId.first()
@@ -214,7 +153,7 @@ class TermuxBridge @Inject constructor(
                 }
 
                 val request = Request.Builder()
-                    .url("$HERMES_AGENT_URL/api/v1/voice")
+                    .url("$LOCAL_AGENT_URL/api/v1/voice")
                     .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
                     .addHeader("Content-Type", "application/json")
                     .post(requestBody.toString().toRequestBody())
@@ -223,21 +162,27 @@ class TermuxBridge @Inject constructor(
                 val response = httpClient.newCall(request).execute()
                 val body = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val json = JSONObject(body)
-                    val reply = json.optString("reply", "")
-                    val mode = json.optString("mode", "")
-                    val intentName = json.optString("intent", "")
-                    val source = json.optString("source", "")
-                    val clarification = json.optJSONObject("clarification")
-                    TermuxCommandResult(
-                        success = true, output = reply, mode = mode,
-                        intent = intentName, source = source, clarification = clarification
-                    )
-                } else {
-                    TermuxCommandResult(
+                if (!response.isSuccessful) {
+                    return@withContext TermuxCommandResult(
                         success = false,
                         error = "Voice API returned ${response.code}: $body"
+                    )
+                }
+
+                val json = JSONObject(body)
+                val status = json.optString("status", "")
+                val taskId = json.optString("task_id", "")
+
+                if (status == "accepted" && taskId.isNotEmpty()) {
+                    val taskResult = pollTaskResult(taskId)
+                    taskResult
+                } else {
+                    val reply = json.optString("reply", "")
+                    TermuxCommandResult(
+                        success = true, output = reply, status = status,
+                        intent = json.optString("intent", ""),
+                        source = json.optString("source", ""),
+                        clarification = json.optJSONObject("clarification")
                     )
                 }
             } catch (e: Exception) {
@@ -245,6 +190,74 @@ class TermuxBridge @Inject constructor(
                 TermuxCommandResult(success = false, error = e.message)
             }
         }
+
+    private suspend fun pollTaskResult(taskId: String): TermuxCommandResult =
+        withContext(Dispatchers.IO) {
+            repeat(TASK_POLL_MAX_ATTEMPTS) {
+                try {
+                    val request = Request.Builder()
+                        .url("$LOCAL_AGENT_URL/api/v1/task/$taskId")
+                        .build()
+                    val response = httpClient.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.body?.string() ?: "")
+                        val taskStatus = json.optString("status", "")
+
+                        if (taskStatus == "RUNNING" || taskStatus == "UNKNOWN") {
+                            delay(TASK_POLL_INTERVAL_MS)
+                            return@repeat
+                        }
+
+                        val reply = json.optString("reply", "")
+                        return@withContext TermuxCommandResult(
+                            success = taskStatus != "ERROR",
+                            output = reply,
+                            status = taskStatus,
+                            intent = json.optString("intent", ""),
+                            source = json.optString("source", ""),
+                            taskId = taskId,
+                            clarification = json.optJSONObject("clarification")
+                        )
+                    }
+                } catch (_: Exception) {}
+                delay(TASK_POLL_INTERVAL_MS)
+            }
+            TermuxCommandResult(
+                success = false, error = "Task polling timed out",
+                taskId = taskId, status = "TIMEOUT"
+            )
+        }
+
+    suspend fun cancelTask(taskId: String = ""): TermuxCommandResult = withContext(Dispatchers.IO) {
+        try {
+            val requestBody = JSONObject().apply {
+                if (taskId.isNotEmpty()) put("task_id", taskId)
+            }
+
+            val request = Request.Builder()
+                .url("$LOCAL_AGENT_URL/api/v1/cancel")
+                .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody.toString().toRequestBody())
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = JSONObject(response.body?.string() ?: "")
+                TermuxCommandResult(
+                    success = true,
+                    output = "已停止操作",
+                    status = "cancelled",
+                    taskId = json.optString("task_id", taskId)
+                )
+            } else {
+                TermuxCommandResult(success = false, error = "Cancel failed: ${response.code}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Cancel failed", e)
+            TermuxCommandResult(success = false, error = e.message)
+        }
+    }
 
     suspend fun executeAutoGLMAction(action: String, params: Map<String, Any> = emptyMap()): TermuxCommandResult =
         withContext(Dispatchers.IO) {
@@ -255,7 +268,7 @@ class TermuxBridge @Inject constructor(
                 }
 
                 val request = Request.Builder()
-                    .url("$HERMES_AGENT_URL/api/v1/execute/autoglm")
+                    .url("$LOCAL_AGENT_URL/api/v1/execute/autoglm")
                     .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
                     .addHeader("Content-Type", "application/json")
                     .post(requestBody.toString().toRequestBody())
@@ -283,27 +296,6 @@ class TermuxBridge @Inject constructor(
             }
         }
 
-    suspend fun interruptExecution(): TermuxCommandResult = withContext(Dispatchers.IO) {
-        try {
-            val request = Request.Builder()
-                .url("$HERMES_AGENT_URL/api/v1/interrupt")
-                .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
-                .addHeader("Content-Type", "application/json")
-                .post("{}".toRequestBody())
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                TermuxCommandResult(success = true, output = "Execution interrupted")
-            } else {
-                TermuxCommandResult(success = false, error = "Interrupt failed: ${response.code}")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Interrupt failed", e)
-            TermuxCommandResult(success = false, error = e.message)
-        }
-    }
-
     suspend fun saveContact(nickname: String, realName: String, phone: String? = null, relation: String? = null): Boolean =
         withContext(Dispatchers.IO) {
             try {
@@ -315,19 +307,42 @@ class TermuxBridge @Inject constructor(
                 }
 
                 val request = Request.Builder()
-                    .url("$HERMES_AGENT_URL/api/v1/memory/contacts")
+                    .url("$LOCAL_AGENT_URL/api/v1/memory/contacts")
                     .addHeader("Authorization", "Bearer ${BuildConfig.HERMES_API_KEY}")
                     .addHeader("Content-Type", "application/json")
                     .post(requestBody.toString().toRequestBody())
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                response.isSuccessful
+                httpClient.newCall(request).execute().isSuccessful
             } catch (e: Exception) {
                 Log.e(TAG, "Save contact failed", e)
                 false
             }
         }
+
+    fun executeCommand(command: TermuxCommand): TermuxCommandResult {
+        if (!ALLOWED_COMMANDS.contains(command.action)) {
+            return TermuxCommandResult(success = false, error = "Command not allowed: ${command.action}")
+        }
+
+        for (param in command.params.values) {
+            for (pattern in DANGEROUS_PATTERNS) {
+                if (param.contains(pattern, ignoreCase = true)) {
+                    return TermuxCommandResult(success = false, error = "Dangerous pattern detected: $pattern")
+                }
+            }
+        }
+
+        return try {
+            val intent = buildTermuxIntent(command)
+            context.sendBroadcast(intent)
+            Log.d(TAG, "Command executed: ${command.action}")
+            TermuxCommandResult(success = true, output = "Command sent")
+        } catch (e: Exception) {
+            Log.e(TAG, "Command failed: ${command.action}", e)
+            TermuxCommandResult(success = false, error = e.message)
+        }
+    }
 
     private fun buildTermuxIntent(command: TermuxCommand): Intent {
         val intent = Intent()
@@ -349,19 +364,10 @@ class TermuxBridge @Inject constructor(
                 intent.putExtra("com.termux.api.extra.NOTIFICATION_TITLE", command.params["title"] ?: "AI沪老提醒")
                 intent.putExtra("com.termux.api.extra.NOTIFICATION_CONTENT", command.params["content"] ?: "")
                 intent.putExtra("com.termux.api.extra.NOTIFICATION_ID", command.params["id"] ?: "hulao_default")
-                if (command.params.containsKey("sound")) {
-                    intent.putExtra("com.termux.api.extra.NOTIFICATION_SOUND", true)
-                }
-                if (command.params.containsKey("ongoing")) {
-                    intent.putExtra("com.termux.api.extra.NOTIFICATION_ONGOING", true)
-                }
             }
             "TTS_SPEAK" -> {
                 intent.setAction("com.termux.api.command.TTS_SPEAK")
                 intent.putExtra("com.termux.api.extra.TTS_TEXT", command.params["text"] ?: "")
-                if (command.params.containsKey("language")) {
-                    intent.putExtra("com.termux.api.extra.TTS_LANGUAGE", command.params["language"])
-                }
             }
             "TTS_STOP" -> {
                 intent.setAction("com.termux.api.command.TTS_STOP")

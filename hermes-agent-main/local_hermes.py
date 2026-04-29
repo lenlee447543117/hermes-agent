@@ -1,5 +1,5 @@
 """
-AI沪老 Termux Edge Agent - 本地中枢 V4.0
+AI沪老 Termux Edge Agent - 本地中枢 V4.1
 完全对齐解决方案.md 架构设计
 
 模块拆分：
@@ -9,35 +9,40 @@ AI沪老 Termux Edge Agent - 本地中枢 V4.0
   intent_parser.py  → 三级解析(缓存→规则→云端) + 记忆库 + 澄清
 
 接口契约（对齐解决方案.md 第三章）：
-  POST /api/v1/voice   → {status: "accepted", task_id: "..."}
-  POST /api/v1/cancel  → {status: "cancelled", task_id: "..."}
-  GET  /api/v1/status  → {state: "IDLE|LISTENING|THINKING|EXECUTING|SUCCESS|ERROR", ...}
-  POST /api/v1/chat    → 同 /api/v1/voice
-  POST /api/v1/execute → 直接执行动作
+  POST /api/v1/voice       → {status: "accepted", task_id: "..."}
+  POST /api/v1/cancel      → {status: "cancelled", task_id: "..."}
+  GET  /api/v1/status      → {state: "IDLE|LISTENING|THINKING|EXECUTING|SUCCESS|ERROR", ...}
+  GET  /api/v1/task/{id}   → {task_id, status, reply, ...}
+  POST /api/v1/chat        → 同 /api/v1/voice
+  POST /api/v1/execute     → 直接执行动作
 
 启动：uvicorn local_hermes:app --host 127.0.0.1 --port 8000
 """
 
-import uiautomator2 as u2
-import subprocess
 import json
-import time
-import uuid
 import logging
 import os
+import re
+import sqlite3
+import subprocess
 import threading
-from typing import Optional, Dict, Any
-from enum import Enum
+import time
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+import uiautomator2 as u2
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from adb_manager import ADBHeartbeat, ensure_connection
-from privacy_engine import desensitize_image, capture_screen_numpy, prepare_upload_payload, get_ui_summary
 from executor import ActionExecutor, HermesVisualExecutor
-from intent_parser import (MemoryStore, OfflineIntentParser, IntentClarifier,
-                           three_level_parse, OFFLINE_INTENT_TEMPLATES)
+from intent_parser import (IntentClarifier, MemoryStore, OfflineIntentParser,
+                           OFFLINE_INTENT_TEMPLATES, three_level_parse)
+from privacy_engine import (capture_screen_numpy, desensitize_image,
+                            get_ui_summary, prepare_upload_payload)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,17 +69,25 @@ class VoiceRequest(BaseModel):
     user_id: str = "default"
     dialect: str = "shanghai"
 
+
 class ExecuteRequest(BaseModel):
     action: str
     params: Dict[str, Any] = {}
+
 
 class ChatRequest(BaseModel):
     message: str
     user_id: str = "default"
     dialect: str = "shanghai"
 
+
 class CancelRequest(BaseModel):
     task_id: str = ""
+
+
+class ClarifyRequest(BaseModel):
+    options: List[str]
+    prompt: str
 
 
 memory = MemoryStore()
@@ -83,13 +96,17 @@ intent_clarifier = IntentClarifier(memory)
 adb_heartbeat = ADBHeartbeat(interval=120)
 
 device: Optional[u2.Device] = None
-executor: Optional[ActionExecutor] = None
+action_executor: Optional[ActionExecutor] = None
 visual_executor: Optional[HermesVisualExecutor] = None
 
 agent_state = AgentState.IDLE
 current_task_id: Optional[str] = None
 task_results: Dict[str, Dict] = {}
 state_lock = threading.Lock()
+
+vosk_available = False
+autoglm_available = False
+privacy_available = False
 
 
 def set_state(new_state: AgentState):
@@ -107,22 +124,30 @@ def get_state() -> AgentState:
 def termux_speak(text: str):
     try:
         subprocess.run(["termux-tts-speak", text], timeout=10)
-    except:
+    except Exception:
         pass
 
 
 def termux_notify(title: str, content: str):
     try:
         subprocess.run(["termux-notification", "--title", title, "--content", content, "--id", "hulao", "--sound"], timeout=5)
-    except:
+    except Exception:
         pass
 
 
 def termux_vibrate(duration: int = 200):
     try:
         subprocess.run(["termux-vibrate", "-d", str(duration)], timeout=5)
-    except:
+    except Exception:
         pass
+
+
+def _extract_nickname(text: str) -> Optional[str]:
+    for p in ["给(.+?)打", "跟(.+?)联系", "找(.+?)聊", "联系(.+?)$", "呼叫(.+?)"]:
+        m = re.search(p, text)
+        if m:
+            return m.group(1).strip()
+    return None
 
 
 def _execute_voice_task(task_id: str, text: str, user_id: str, dialect: str):
@@ -132,14 +157,7 @@ def _execute_voice_task(task_id: str, text: str, user_id: str, dialect: str):
     try:
         set_state(AgentState.THINKING)
 
-        import re
-        nickname = None
-        for p in ["给(.+?)打", "跟(.+?)联系", "找(.+?)聊", "联系(.+?)$", "呼叫(.+?)"]:
-            m = re.search(p, text)
-            if m:
-                nickname = m.group(1).strip()
-                break
-
+        nickname = _extract_nickname(text)
         if nickname:
             clarification = intent_clarifier.clarify_contact(nickname)
             if clarification:
@@ -168,12 +186,16 @@ def _execute_voice_task(task_id: str, text: str, user_id: str, dialect: str):
         if parsed.get("source") == "cache":
             set_state(AgentState.EXECUTING)
             termux_speak("好额，帮侬做好了" if dialect == "shanghai" else "好的，正在为您操作")
-            result = executor.execute_action_chain(task_id, parsed["actions"])
-            task_results[task_id] = {
-                "status": result["status"], "reply": "操作完成",
-                "source": "cache_replay", "executed": result.get("executed", [])
-            }
-            set_state(AgentState.SUCCESS if result["success"] else AgentState.ERROR)
+            if action_executor:
+                result = action_executor.execute_action_chain(task_id, parsed["actions"])
+                task_results[task_id] = {
+                    "status": result["status"], "reply": "操作完成",
+                    "source": "cache_replay", "executed": result.get("executed", [])
+                }
+                set_state(AgentState.SUCCESS if result["success"] else AgentState.ERROR)
+            else:
+                task_results[task_id] = {"status": "ERROR", "reply": "设备未连接，无法执行缓存动作"}
+                set_state(AgentState.ERROR)
             return
 
         if parsed.get("source") == "offline":
@@ -197,10 +219,9 @@ def _execute_voice_task(task_id: str, text: str, user_id: str, dialect: str):
                 set_state(AgentState.SUCCESS)
                 return
 
-        set_state(AgentState.THINKING)
         cloud_result = _forward_to_hermes(text, dialect)
         task_results[task_id] = cloud_result
-        set_state(AgentState.SUCCESS if cloud_result.get("success", True) else AgentState.ERROR)
+        set_state(AgentState.SUCCESS if cloud_result.get("status") != "ERROR" else AgentState.ERROR)
 
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")
@@ -279,7 +300,7 @@ def _handle_battery(text: str, dialect: str) -> Dict:
         pct = battery.get("percentage", "未知")
         status = battery.get("status", "未知")
         reply = f"手机还有{pct}%的电，{status}" if dialect == "shanghai" else f"手机电量{pct}%，{status}"
-    except:
+    except Exception:
         reply = "查不到电量" if dialect == "shanghai" else "无法获取电量信息"
     termux_speak(reply)
     return {"status": "COMPLETED", "reply": reply, "intent": "BATTERY_STATUS"}
@@ -290,7 +311,7 @@ def _handle_location(text: str, dialect: str) -> Dict:
         result = subprocess.run(["termux-location", "-p", "network", "-r", "once"], capture_output=True, text=True, timeout=15)
         loc = json.loads(result.stdout) if result.stdout else {}
         reply = f"您当前位置：纬度{loc.get('latitude', 0):.4f}，经度{loc.get('longitude', 0):.4f}"
-    except:
+    except Exception:
         reply = "查不到位置" if dialect == "shanghai" else "无法获取位置信息"
     termux_speak(reply)
     return {"status": "COMPLETED", "reply": reply, "intent": "SHARE_LOCATION"}
@@ -330,31 +351,46 @@ def _forward_to_hermes(message: str, dialect: str) -> Dict:
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    global device, executor, visual_executor
+    global device, action_executor, visual_executor
+    global vosk_available, autoglm_available, privacy_available
 
     try:
         subprocess.run(["termux-wake-lock"], timeout=5)
         logger.info("Termux wake-lock acquired")
-    except:
+    except Exception:
         pass
 
     try:
         os.nice(10)
-    except:
+    except Exception:
+        pass
+
+    try:
+        import vosk
+        vosk_available = True
+    except ImportError:
+        pass
+
+    autoglm_available = bool(os.environ.get("AUTOGLM_PHONE_API_KEY", ""))
+
+    try:
+        import cv2
+        privacy_available = True
+    except ImportError:
         pass
 
     try:
         ensure_connection()
         device = u2.connect("127.0.0.1")
-        executor = ActionExecutor(device, memory)
-        visual_executor = HermesVisualExecutor(executor, privacy_module=__import__('privacy_engine'))
+        action_executor = ActionExecutor(device, memory)
+        visual_executor = HermesVisualExecutor(action_executor, privacy_module=None)
         adb_heartbeat.start()
         logger.info("Device connected via uiautomator2")
     except Exception as e:
         logger.warning(f"Device not available: {e}, running in Termux:API only mode")
 
     termux_speak("沪老助手已启动")
-    logger.info("HulaoEdgeAgent V4.0 started on http://127.0.0.1:8000")
+    logger.info("HulaoEdgeAgent V4.1 started on http://127.0.0.1:8000")
 
     yield
 
@@ -362,7 +398,7 @@ async def lifespan(app_instance: FastAPI):
     logger.info("HulaoEdgeAgent shutting down")
 
 
-app = FastAPI(title="HulaoEdgeAgent", version="4.0", lifespan=lifespan)
+app = FastAPI(title="HulaoEdgeAgent", version="4.1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -383,16 +419,27 @@ async def handle_voice(req: VoiceRequest):
     return {"status": "accepted", "task_id": task_id}
 
 
+@app.get("/api/v1/task/{task_id}")
+async def get_task_result(task_id: str):
+    result = task_results.get(task_id)
+    if result is None:
+        if task_id == current_task_id:
+            return {"task_id": task_id, "status": "RUNNING"}
+        return {"task_id": task_id, "status": "UNKNOWN"}
+    return {"task_id": task_id, **result}
+
+
 @app.post("/api/v1/cancel")
 async def handle_cancel(req: CancelRequest = None):
-    tid = req.task_id if req else ""
-    if executor:
-        executor.cancel()
+    tid = req.task_id if req and req.task_id else ""
+    if action_executor:
+        action_executor.cancel()
     set_state(AgentState.IDLE)
     termux_speak("好的，已停止操作")
     termux_vibrate(300)
-    logger.info(f"Task cancelled: {tid or current_task_id}")
-    return {"status": "cancelled", "task_id": tid or current_task_id or ""}
+    cancelled_id = tid or current_task_id or ""
+    logger.info(f"Task cancelled: {cancelled_id}")
+    return {"status": "cancelled", "task_id": cancelled_id}
 
 
 @app.get("/api/v1/status")
@@ -401,11 +448,14 @@ async def get_status():
     result = {
         "state": state.value,
         "device_connected": device is not None,
-        "current_task_id": current_task_id,
+        "current_task_id": current_task_id or "",
+        "vosk_available": vosk_available,
+        "autoglm_available": autoglm_available,
+        "privacy_filter_available": privacy_available,
         "memory_contacts": memory.count_contacts(),
         "cached_actions": memory.count_cached_actions(),
         "offline_templates": len(OFFLINE_INTENT_TEMPLATES),
-        "version": "4.0"
+        "version": "4.1"
     }
     if current_task_id and current_task_id in task_results:
         result["last_result"] = task_results[current_task_id]
@@ -421,7 +471,7 @@ async def handle_chat(req: ChatRequest):
 async def handle_execute(req: ExecuteRequest):
     logger.info(f"Execute: {req.action}, params: {req.params}")
 
-    if not executor:
+    if not device:
         return {"success": False, "error": "Device not connected"}
 
     action_map = {
@@ -469,24 +519,23 @@ async def handle_interrupt():
 
 
 @app.post("/api/v1/clarify")
-async def handle_clarify(options: List[str], prompt: str):
-    return {"prompt": prompt, "options": [{"index": i, "label": o} for i, o in enumerate(options)]}
+async def handle_clarify(req: ClarifyRequest):
+    return {"prompt": req.prompt, "options": [{"index": i, "label": o} for i, o in enumerate(req.options)]}
 
 
 @app.get("/api/v1/device/info")
 async def device_info():
-    info = {"device_connected": device is not None}
+    info: Dict[str, Any] = {"device_connected": device is not None}
     if device:
         try:
-            current = device.app_current()
-            info["current_app"] = current
-        except:
+            info["current_app"] = device.app_current()
+        except Exception:
             pass
     try:
         result = subprocess.run(["termux-battery-status"], capture_output=True, text=True, timeout=5)
         if result.stdout:
             info["battery"] = json.loads(result.stdout)
-    except:
+    except Exception:
         pass
     return info
 
@@ -520,9 +569,10 @@ async def list_habits(user_id: str = "default"):
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "HulaoEdgeAgent", "version": "4.0",
-            "device_connected": device is not None, "state": get_state().value}
-
-
-import sqlite3
-from typing import List
+    return {
+        "status": "healthy",
+        "service": "HulaoEdgeAgent",
+        "version": "4.1",
+        "device_connected": device is not None,
+        "state": get_state().value
+    }

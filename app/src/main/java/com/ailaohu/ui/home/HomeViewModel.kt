@@ -23,8 +23,7 @@ import com.ailaohu.domain.usecase.ExecuteWeChatCallUseCase
 import com.ailaohu.domain.usecase.WeatherInfoUseCase
 import com.ailaohu.domain.usecase.NewsInfoUseCase
 import com.ailaohu.domain.usecase.MedicineReminderUseCase
-import com.ailaohu.service.hermes.AgentState
-import com.ailaohu.service.hermes.HermesClient
+import com.ailaohu.service.termux.AgentState
 import com.ailaohu.service.termux.TermuxBridge
 import com.ailaohu.service.termux.TermuxCommand
 import com.ailaohu.service.chat.ChatService
@@ -116,7 +115,6 @@ class HomeViewModel @Inject constructor(
     private val newsInfoUseCase: NewsInfoUseCase,
     private val medicineReminderUseCase: MedicineReminderUseCase,
     private val termuxBridge: TermuxBridge,
-    private val hermesClient: HermesClient,
     private val appPreferences: AppPreferences,
     private val networkMonitor: NetworkMonitor,
     private val ttsManager: TTSManager,
@@ -188,7 +186,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             while (true) {
                 try {
-                    val status = hermesClient.getAgentStatus()
+                    val status = termuxBridge.getAgentStatus()
                     _uiState.update {
                         it.copy(
                             agentState = status.state,
@@ -1155,7 +1153,7 @@ class HomeViewModel @Inject constructor(
     fun cancelCurrentTask() {
         viewModelScope.launch {
             val taskId = _uiState.value.currentTaskId
-            hermesClient.cancelTask(taskId)
+            termuxBridge.cancelTask(taskId)
             _uiState.update { it.copy(agentState = AgentState.IDLE, currentTaskId = "") }
         }
     }
