@@ -23,6 +23,8 @@ import com.ailaohu.domain.usecase.ExecuteWeChatCallUseCase
 import com.ailaohu.domain.usecase.WeatherInfoUseCase
 import com.ailaohu.domain.usecase.NewsInfoUseCase
 import com.ailaohu.domain.usecase.MedicineReminderUseCase
+import com.ailaohu.service.termux.TermuxBridge
+import com.ailaohu.service.termux.TermuxCommand
 import com.ailaohu.service.chat.ChatService
 import com.ailaohu.service.care.ProactiveCareService
 import com.ailaohu.service.habit.HabitTrackingService
@@ -41,6 +43,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import javax.inject.Inject
 
 enum class VoiceState {
@@ -106,6 +111,7 @@ class HomeViewModel @Inject constructor(
     private val weatherInfoUseCase: WeatherInfoUseCase,
     private val newsInfoUseCase: NewsInfoUseCase,
     private val medicineReminderUseCase: MedicineReminderUseCase,
+    private val termuxBridge: TermuxBridge,
     private val appPreferences: AppPreferences,
     private val networkMonitor: NetworkMonitor,
     private val ttsManager: TTSManager,
@@ -146,6 +152,7 @@ class HomeViewModel @Inject constructor(
     // 记录上一条指令，用于重复
     private var lastCommand: VoiceCommand? = null
     private var isAutomationRunning = false
+    private val automationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
         voiceCommandBridge.setOnCommandComplete {
@@ -332,7 +339,9 @@ class HomeViewModel @Inject constructor(
         when (pending.type) {
             PendingActionType.WECHAT_CALL -> {
                 val cmd = pending.command as VoiceCommand.WeChatCall
-                doWeChatCall(cmd)
+                automationScope.launch {
+                    doWeChatCall(cmd)
+                }
             }
             PendingActionType.PHONE_CALL -> {
                 val cmd = pending.command as VoiceCommand.PhoneCall
@@ -387,7 +396,9 @@ class HomeViewModel @Inject constructor(
      * 需要确认的操作：微信通话
      */
     private suspend fun executeWeChatCallWithConfirm(command: VoiceCommand.WeChatCall) {
-        doWeChatCall(command)
+        automationScope.launch {
+            doWeChatCall(command)
+        }
     }
 
     /**
@@ -564,30 +575,49 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun executePlayMusic(command: VoiceCommand.PlayMusic) {
         try {
-            when (command.action) {
-                "play" -> {
-                    val intent = Intent("android.intent.action.MUSIC_PLAYER").apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    if (intent.resolveActivity(context.packageManager) != null) {
-                        context.startActivity(intent)
-                    }
-                    speakAndRespond("正在播放音乐")
+            if (termuxBridge.isTermuxAvailable()) {
+                val subCmd = when (command.action) {
+                    "play" -> "play"
+                    "pause", "stop" -> "stop"
+                    "next" -> "next"
+                    "previous" -> "previous"
+                    else -> "play"
                 }
-                "pause" -> speakAndRespond("音乐已暂停")
-                "next" -> {
-                    val intent = Intent("com.android.music.musicservicecommand").apply {
-                        putExtra("command", "next")
-                    }
-                    context.sendBroadcast(intent)
-                    speakAndRespond("切换到下一首")
+                termuxBridge.executeCommand(TermuxCommand("MEDIA_PLAYER", mapOf("command" to subCmd)))
+                val replyText = when (command.action) {
+                    "play" -> "正在播放音乐"
+                    "pause", "stop" -> "音乐已暂停"
+                    "next" -> "切换到下一首"
+                    "previous" -> "切换到上一首"
+                    else -> "正在播放音乐"
                 }
-                "previous" -> {
-                    val intent = Intent("com.android.music.musicservicecommand").apply {
-                        putExtra("command", "previous")
+                speakAndRespond(replyText)
+            } else {
+                when (command.action) {
+                    "play" -> {
+                        val intent = Intent("android.intent.action.MUSIC_PLAYER").apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        if (intent.resolveActivity(context.packageManager) != null) {
+                            context.startActivity(intent)
+                        }
+                        speakAndRespond("正在播放音乐")
                     }
-                    context.sendBroadcast(intent)
-                    speakAndRespond("切换到上一首")
+                    "pause" -> speakAndRespond("音乐已暂停")
+                    "next" -> {
+                        val intent = Intent("com.android.music.musicservicecommand").apply {
+                            putExtra("command", "next")
+                        }
+                        context.sendBroadcast(intent)
+                        speakAndRespond("切换到下一首")
+                    }
+                    "previous" -> {
+                        val intent = Intent("com.android.music.musicservicecommand").apply {
+                            putExtra("command", "previous")
+                        }
+                        context.sendBroadcast(intent)
+                        speakAndRespond("切换到上一首")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -609,17 +639,38 @@ class HomeViewModel @Inject constructor(
                     speakAndRespond("音量已调小")
                 }
                 "mute" -> {
-                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
-                    speakAndRespond("已静音")
+                    if (termuxBridge.isTermuxAvailable()) {
+                        termuxBridge.executeCommand(TermuxCommand("VOLUME", mapOf("stream" to "music", "level" to "0")))
+                        speakAndRespond("已静音")
+                    } else {
+                        audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+                        speakAndRespond("已静音")
+                    }
                 }
                 "unmute" -> {
-                    audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
-                    speakAndRespond("已取消静音")
+                    if (termuxBridge.isTermuxAvailable()) {
+                        termuxBridge.executeCommand(TermuxCommand("VOLUME", mapOf("stream" to "music", "level" to "10")))
+                        speakAndRespond("已取消静音")
+                    } else {
+                        audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, AudioManager.FLAG_SHOW_UI)
+                        speakAndRespond("已取消静音")
+                    }
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "音量控制失败", e)
-            speakAndRespond("音量控制失败")
+            if (termuxBridge.isTermuxAvailable()) {
+                val level = when (command.action) {
+                    "up" -> "15"
+                    "down" -> "5"
+                    "mute" -> "0"
+                    else -> "10"
+                }
+                termuxBridge.executeCommand(TermuxCommand("VOLUME", mapOf("stream" to "music", "level" to level)))
+                speakAndRespond("音量已调整")
+            } else {
+                speakAndRespond("音量控制失败")
+            }
         }
     }
 
@@ -638,20 +689,32 @@ class HomeViewModel @Inject constructor(
                     speakAndRespond("已${actionText}手电筒")
                 }
                 "bluetooth" -> {
-                    val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (termuxBridge.isTermuxAvailable()) {
+                        termuxBridge.executeCommand(TermuxCommand("WIFI", mapOf("enable" to (command.action == "on").toString())))
+                        val actionText = if (command.action == "on") "打开" else "关闭"
+                        speakAndRespond("已${actionText}蓝牙")
+                    } else {
+                        val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                        val actionText = if (command.action == "on") "打开" else "关闭"
+                        speakAndRespond("已为您打开蓝牙设置，请${actionText}蓝牙")
                     }
-                    context.startActivity(intent)
-                    val actionText = if (command.action == "on") "打开" else "关闭"
-                    speakAndRespond("已为您打开蓝牙设置，请${actionText}蓝牙")
                 }
                 "wifi" -> {
-                    val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (termuxBridge.isTermuxAvailable()) {
+                        termuxBridge.executeCommand(TermuxCommand("WIFI", mapOf("enable" to (command.action == "on").toString())))
+                        val actionText = if (command.action == "on") "打开" else "关闭"
+                        speakAndRespond("已${actionText}WiFi")
+                    } else {
+                        val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                        val actionText = if (command.action == "on") "打开" else "关闭"
+                        speakAndRespond("已为您打开WiFi设置，请${actionText}WiFi")
                     }
-                    context.startActivity(intent)
-                    val actionText = if (command.action == "on") "打开" else "关闭"
-                    speakAndRespond("已为您打开WiFi设置，请${actionText}WiFi")
                 }
                 else -> {
                     val intent = Intent(Settings.ACTION_SETTINGS).apply {
@@ -701,6 +764,27 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun executeTakePhoto(command: VoiceCommand.TakePhoto) {
+        try {
+            if (termuxBridge.isTermuxAvailable()) {
+                val path = "/sdcard/DCIM/hulao_photo_${System.currentTimeMillis()}.jpg"
+                val result = termuxBridge.executeCommand(
+                    TermuxCommand("CAMERA", mapOf("camera_id" to "0", "path" to path))
+                )
+                if (result.success) {
+                    speakAndRespond("好的，照片已拍好")
+                } else {
+                    fallbackCameraIntent(command)
+                }
+            } else {
+                fallbackCameraIntent(command)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "拍照失败", e)
+            fallbackCameraIntent(command)
+        }
+    }
+
+    private suspend fun fallbackCameraIntent(command: VoiceCommand.TakePhoto) {
         try {
             val action = if (command.action == "video") {
                 android.provider.MediaStore.ACTION_VIDEO_CAPTURE
