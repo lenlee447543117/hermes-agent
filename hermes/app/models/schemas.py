@@ -45,6 +45,10 @@ class ActionPayload(BaseModel):
     intent: IntentType
     target_person: Optional[str] = None
     parameters: Optional[dict] = None
+    # 用药提醒专用字段
+    medicine_name: Optional[str] = None
+    dosage: Optional[str] = None
+    time: Optional[str] = None
 
 
 class VlmRequest(BaseModel):

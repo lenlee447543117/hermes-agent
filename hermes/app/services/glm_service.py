@@ -165,6 +165,9 @@ class GlmService:
                         intent=intent,
                         target_person=payload_data.get("target_person"),
                         parameters=payload_data.get("parameters"),
+                        medicine_name=payload_data.get("medicine_name"),
+                        dosage=payload_data.get("dosage"),
+                        time=payload_data.get("time"),
                     )
 
                 return {
