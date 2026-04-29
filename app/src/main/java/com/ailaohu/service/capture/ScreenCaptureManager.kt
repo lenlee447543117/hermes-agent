@@ -40,6 +40,10 @@ class ScreenCaptureManager @Inject constructor(
         return permissionManager.hasPermissionSync() && savedResultCode != null && savedData != null
     }
 
+    fun needsReAuthorization(): Boolean {
+        return permissionManager.hasPermissionSync() && (savedResultCode == null || savedData == null)
+    }
+
     suspend fun captureScreen(): Bitmap? {
         if (!hasPermission()) {
             Log.w(TAG, "没有屏幕捕获权限")

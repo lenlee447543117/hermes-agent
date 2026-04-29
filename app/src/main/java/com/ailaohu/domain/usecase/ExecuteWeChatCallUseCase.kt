@@ -27,7 +27,7 @@ class ExecuteWeChatCallUseCase @Inject constructor(
     companion object {
         private const val TAG = "WeChatCall"
         private const val MAX_VLM_RETRIES = 2
-        private const val VLM_RETRY_DELAY = 5000L
+        private const val VLM_RETRY_DELAY = 8000L
         private const val SEARCH_INPUT_DELAY = 2000L
         private const val SEARCH_RESULT_DELAY = 2500L
         private const val CALL_CONNECT_DELAY = 3000L
@@ -54,30 +54,34 @@ class ExecuteWeChatCallUseCase @Inject constructor(
 
         try {
             if (cancelled) return handleCancel()
+            ttsManager.speak("正在打开微信")
             if (!checkAndLaunchWeChat()) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "无法启动微信")
             }
             delay(Constants.STEP_DELAY_MEDIUM)
 
             if (cancelled) return handleCancel()
+            ttsManager.speak("正在搜索联系人")
             if (!clickSearchButton()) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到搜索按钮")
             }
             delay(Constants.STEP_DELAY_SHORT)
 
             if (cancelled) return handleCancel()
-            if (!inputSearchText(contactDisplayName)) {
+            if (!inputSearchText(contactDisplayName, contactPinyin)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "无法输入联系人名称")
             }
             delay(SEARCH_INPUT_DELAY)
 
             if (cancelled) return handleCancel()
+            ttsManager.speak("正在查找${contactDisplayName}")
             if (!clickSearchResult(contactDisplayName)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到${contactDisplayName}")
             }
             delay(SEARCH_RESULT_DELAY)
 
             if (cancelled) return handleCancel()
+            ttsManager.speak("正在发起${callType}通话")
             if (!clickCallButton(isVideoCall)) {
                 return handleFailure(contactDisplayName, childPhoneNumber, "找不到${callType}通话按钮")
             }
@@ -109,7 +113,11 @@ class ExecuteWeChatCallUseCase @Inject constructor(
                 screenInfo.contains("WeChat")
 
         if (isWeChatForeground) {
-            Log.d(TAG, "微信已在前台")
+            Log.d(TAG, "微信已在前台，按返回键确保回到主页")
+            AutoPilotService.performBack()
+            Thread.sleep(500)
+            AutoPilotService.performBack()
+            Thread.sleep(300)
             return true
         }
 
@@ -138,29 +146,41 @@ class ExecuteWeChatCallUseCase @Inject constructor(
         }
 
         Log.w(TAG, "VLM未找到搜索按钮，尝试无障碍节点查找")
-        val screenInfo = AutoPilotService.getScreenInfo() ?: ""
-        if (screenInfo.contains("搜索")) {
-            AutoPilotService.performClick(0.92f, 0.04f)
+        val searchClicked = AutoPilotService.clickNodeByText("搜索")
+                || AutoPilotService.clickNodeByDesc("搜索")
+                || AutoPilotService.clickNodeByDesc("搜尋")
+                || AutoPilotService.clickNodeByDesc("Search")
+                || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/jha")
+        if (searchClicked) {
+            Log.d(TAG, "通过无障碍节点点击搜索成功")
             return true
         }
 
-        Log.w(TAG, "无障碍也未找到搜索，尝试点击右上角区域")
-        AutoPilotService.performClick(0.92f, 0.04f)
+        Log.w(TAG, "无障碍也未找到搜索节点，尝试点击搜索图标区域")
+        AutoPilotService.performClick(0.84f, 0.05f)
         delay(500)
         return true
     }
 
-    private fun inputSearchText(contactName: String): Boolean {
-        val typed = AutoPilotService.performTypeText(contactName)
+    private fun inputSearchText(contactName: String, contactPinyin: String): Boolean {
+        val searchText = if (contactPinyin.matches(Regex("^[a-zA-Z]+$"))) {
+            Log.d(TAG, "使用拼音搜索: $contactPinyin")
+            contactPinyin.lowercase()
+        } else {
+            Log.d(TAG, "使用名称搜索: $contactName")
+            contactName
+        }
+
+        val typed = AutoPilotService.performTypeText(searchText)
         if (typed) {
-            Log.d(TAG, "成功输入联系人名称: $contactName")
+            Log.d(TAG, "成功输入搜索文本: $searchText")
             return true
         }
 
         Log.w(TAG, "无障碍输入失败，尝试剪贴板方式")
         return try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("search", contactName))
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("search", searchText))
             AutoPilotService.performLongClick(0.5f, 0.12f)
             Thread.sleep(300)
             true
@@ -171,6 +191,8 @@ class ExecuteWeChatCallUseCase @Inject constructor(
     }
 
     private suspend fun clickSearchResult(contactName: String): Boolean {
+        delay(500)
+
         val coord = findElementWithVlm(
             PromptBuilder.buildFindElementPrompt("搜索结果中包含「$contactName」的联系人条目")
         )
@@ -179,46 +201,116 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             return true
         }
 
-        Log.w(TAG, "VLM未找到搜索结果，尝试点击第一个结果区域")
-        AutoPilotService.performClick(0.5f, 0.25f)
+        Log.w(TAG, "VLM未找到搜索结果，尝试无障碍节点查找")
+        val nodeClicked = AutoPilotService.clickNodeByText(contactName)
+                || AutoPilotService.clickNodeByDesc(contactName)
+        if (nodeClicked) {
+            Log.d(TAG, "通过无障碍节点点击搜索结果成功")
+            return true
+        }
+
+        Log.w(TAG, "无障碍也未找到精确匹配，尝试点击第一个联系人结果")
+        val firstResultClicked = AutoPilotService.clickNodeByDesc("聯絡人")
+                || AutoPilotService.clickNodeByDesc("联系人")
+        if (firstResultClicked) {
+            Log.d(TAG, "点击第一个联系人分类结果")
+            return true
+        }
+
+        Log.w(TAG, "尝试点击搜索结果列表第一个区域")
+        AutoPilotService.performClick(0.5f, 0.20f)
         return true
     }
 
     private suspend fun clickCallButton(isVideoCall: Boolean): Boolean {
+        delay(1500)
+
         val plusCoord = findElementWithVlm(PromptBuilder.buildWeChatVideoCallPrompt())
         if (plusCoord != null) {
             clickCoordinate(plusCoord)
-            Log.d(TAG, "已点击加号按钮，等待菜单弹出")
+            Log.d(TAG, "已通过VLM点击加号按钮，等待菜单弹出")
             delay(MENU_POPUP_DELAY)
         } else {
-            Log.w(TAG, "VLM未找到加号按钮，尝试固定位置点击")
-            AutoPilotService.performClick(0.92f, 0.92f)
-            delay(MENU_POPUP_DELAY)
+            Log.w(TAG, "VLM未找到加号按钮，尝试无障碍节点查找")
+            val plusClicked = AutoPilotService.clickNodeByDesc("更多功能按鈕，已收起")
+                    || AutoPilotService.clickNodeByDesc("更多功能按钮，已收起")
+                    || AutoPilotService.clickNodeByDesc("更多功能")
+                    || AutoPilotService.clickNodeByDesc("更多功能按钮")
+                    || AutoPilotService.clickNodeByDesc("加号")
+                    || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/bjz")
+                    || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/jga")
+            if (plusClicked) {
+                Log.d(TAG, "通过无障碍节点点击加号成功")
+                delay(MENU_POPUP_DELAY)
+            } else {
+                Log.w(TAG, "无障碍也未找到加号按钮，点击右下角+按钮区域")
+                AutoPilotService.performClick(0.94f, 0.95f)
+                delay(MENU_POPUP_DELAY)
+            }
         }
+
+        delay(500)
 
         val callPrompt = if (isVideoCall) PromptBuilder.buildWeChatVideoCallOptionPrompt()
         else PromptBuilder.buildWeChatVoiceCallOptionPrompt()
         val callCoord = findElementWithVlm(callPrompt)
         if (callCoord != null) {
             clickCoordinate(callCoord)
+            delay(1500)
+            handleCallTypeSelection(isVideoCall)
             return true
         }
 
         Log.w(TAG, "VLM未找到通话按钮，尝试无障碍节点查找")
-        val screenInfo = AutoPilotService.getScreenInfo() ?: ""
-        val targetText = if (isVideoCall) "视频通话" else "语音通话"
-        if (screenInfo.contains(targetText)) {
-            AutoPilotService.performClick(0.5f, 0.55f)
+        val callClicked = if (isVideoCall) {
+            AutoPilotService.clickNodeByText("视频通话")
+                    || AutoPilotService.clickNodeByText("視訊通話")
+                    || AutoPilotService.clickNodeByDesc("视频通话")
+                    || AutoPilotService.clickNodeByDesc("視訊通話")
+        } else {
+            AutoPilotService.clickNodeByText("语音通话")
+                    || AutoPilotService.clickNodeByText("語音通話")
+                    || AutoPilotService.clickNodeByDesc("语音通话")
+                    || AutoPilotService.clickNodeByDesc("語音通話")
+        }
+        if (callClicked) {
+            Log.d(TAG, "通过无障碍节点点击通话按钮成功")
+            delay(1500)
+            handleCallTypeSelection(isVideoCall)
             return true
         }
 
-        Log.w(TAG, "无障碍也未找到通话按钮，尝试固定位置点击视频通话")
+        Log.w(TAG, "无障碍也未找到通话按钮，尝试固定位置点击")
         if (isVideoCall) {
-            AutoPilotService.performClick(0.5f, 0.55f)
+            AutoPilotService.performClick(0.62f, 0.71f)
         } else {
-            AutoPilotService.performClick(0.5f, 0.65f)
+            AutoPilotService.performClick(0.62f, 0.81f)
         }
+
+        delay(1500)
+        handleCallTypeSelection(isVideoCall)
         return true
+    }
+
+    private suspend fun handleCallTypeSelection(isVideoCall: Boolean) {
+        delay(1000)
+        val hasVideoOption = AutoPilotService.hasNodeByText("视频通话")
+                || AutoPilotService.hasNodeByText("視訊通話")
+        val hasVoiceOption = AutoPilotService.hasNodeByText("语音通话")
+                || AutoPilotService.hasNodeByText("語音通話")
+
+        if (hasVideoOption && hasVoiceOption) {
+            Log.d(TAG, "检测到通话类型选择菜单（语音/视频）")
+            if (isVideoCall) {
+                val selected = AutoPilotService.clickNodeByText("视频通话")
+                        || AutoPilotService.clickNodeByText("視訊通話")
+                Log.d(TAG, "选择视频通话: $selected")
+            } else {
+                val selected = AutoPilotService.clickNodeByText("语音通话")
+                        || AutoPilotService.clickNodeByText("語音通話")
+                Log.d(TAG, "选择语音通话: $selected")
+            }
+        }
     }
 
     private suspend fun verifyCallConnected(isVideoCall: Boolean): Boolean {

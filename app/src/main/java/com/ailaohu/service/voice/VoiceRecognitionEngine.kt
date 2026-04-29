@@ -407,6 +407,11 @@ class VoiceRecognitionEngine @Inject constructor(
         
         Log.d(TAG, "已切换到智谱云端识别后端")
         onReadyCallback?.invoke()
+
+        if (continuousMode && !manuallyStopped) {
+            Log.d(TAG, "切换后端后自动重新开始监听")
+            startZhipuRecording()
+        }
     }
     
     /**

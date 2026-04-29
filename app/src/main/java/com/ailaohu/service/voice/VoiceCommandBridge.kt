@@ -167,31 +167,101 @@ class VoiceCommandBridge @Inject constructor(
         try {
             val jsonStart = content.indexOf("{")
             val jsonEnd = content.lastIndexOf("}") + 1
-            if (jsonStart < 0 || jsonEnd <= jsonStart) return Pair(steps, null)
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                val jsonStr = content.substring(jsonStart, jsonEnd)
+                actionResponse = gson.fromJson(jsonStr, AutoGlmActionResponse::class.java)
+            }
 
-            val jsonStr = content.substring(jsonStart, jsonEnd)
-            actionResponse = gson.fromJson(jsonStr, AutoGlmActionResponse::class.java)
-
-            for (action in actionResponse.actions) {
-                steps.add(
-                    StepInfo(
-                        actionType = action.type,
-                        elementName = when (action.type) {
-                            "click" -> "位置(${action.x},${action.y})"
-                            "swipe" -> "从(${action.x},${action.y})滑到(${action.endX},${action.endY})"
-                            "type" -> action.text
-                            "launch" -> action.app
-                            "dial" -> action.number
-                            else -> ""
-                        },
-                        description = actionResponse.description
+            if (actionResponse != null && actionResponse.actions.isNotEmpty()) {
+                for (action in actionResponse.actions) {
+                    steps.add(
+                        StepInfo(
+                            actionType = action.type,
+                            elementName = when (action.type) {
+                                "click" -> "位置(${action.x},${action.y})"
+                                "swipe" -> "从(${action.x},${action.y})滑到(${action.endX},${action.endY})"
+                                "type" -> action.text
+                                "launch" -> action.app
+                                "dial" -> action.number
+                                else -> ""
+                            },
+                            description = actionResponse.description
+                        )
                     )
-                )
+                }
+            } else {
+                val doActions = parseDoActionFormat(content)
+                if (doActions.isNotEmpty()) {
+                    actionResponse = AutoGlmActionResponse(actions = doActions, description = "AutoGLM操作")
+                    for (action in doActions) {
+                        steps.add(
+                            StepInfo(
+                                actionType = action.type,
+                                elementName = when (action.type) {
+                                    "click" -> "位置(${action.x},${action.y})"
+                                    "swipe" -> "从(${action.x},${action.y})滑到(${action.endX},${action.endY})"
+                                    "type" -> action.text
+                                    "launch" -> action.app
+                                    "dial" -> action.number
+                                    else -> ""
+                                },
+                                description = "AutoGLM操作"
+                            )
+                        )
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "解析步骤失败: ${e.message}")
         }
         return Pair(steps, actionResponse)
+    }
+
+    private fun parseDoActionFormat(content: String): List<AutoGlmActionStep> {
+        val actions = mutableListOf<AutoGlmActionStep>()
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels.toFloat()
+        val screenHeight = displayMetrics.heightPixels.toFloat()
+
+        val doPattern = Regex("""do\(action\s*=\s*"(\w+)"\s*,\s*element\s*=\s*\[(\d+)\s*,\s*(\d+)\]\)""")
+        for (match in doPattern.findAll(content)) {
+            val actionType = match.groupValues[1]
+            val absX = match.groupValues[2].toIntOrNull() ?: continue
+            val absY = match.groupValues[3].toIntOrNull() ?: continue
+            val normX = (absX / screenWidth).coerceIn(0f, 1f)
+            val normY = (absY / screenHeight).coerceIn(0f, 1f)
+            when (actionType.lowercase()) {
+                "tap", "click" -> {
+                    actions.add(AutoGlmActionStep(type = "click", x = normX, y = normY))
+                    Log.d(TAG, "解析do格式: Tap($absX,$absY) → click($normX,$normY)")
+                }
+                "swipe" -> {
+                    actions.add(AutoGlmActionStep(type = "swipe", x = normX, y = normY))
+                }
+                "type", "input" -> {
+                    actions.add(AutoGlmActionStep(type = "type", x = normX, y = normY))
+                }
+                else -> {
+                    actions.add(AutoGlmActionStep(type = "click", x = normX, y = normY))
+                }
+            }
+        }
+
+        val launchPattern = Regex("""do\(action\s*=\s*"Launch"\s*,\s*app\s*=\s*"([^"]+)"\)""")
+        for (match in launchPattern.findAll(content)) {
+            val app = match.groupValues[1]
+            actions.add(AutoGlmActionStep(type = "launch", app = app))
+            Log.d(TAG, "解析do格式: Launch($app)")
+        }
+
+        val typePattern = Regex("""do\(action\s*=\s*"Type"\s*,\s*text\s*=\s*"([^"]+)"\)""")
+        for (match in typePattern.findAll(content)) {
+            val text = match.groupValues[1]
+            actions.add(AutoGlmActionStep(type = "type", text = text))
+            Log.d(TAG, "解析do格式: Type($text)")
+        }
+
+        return actions
     }
 
     /**

@@ -38,6 +38,7 @@ android {
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProperties.getProperty("SUPABASE_ANON_KEY", "")}\"")
         buildConfigField("String", "GLM_MODEL", "\"glm-4.7\"")
         buildConfigField("String", "AUTOGLM_MODEL", "\"autoglm-phone\"")
+        buildConfigField("String", "HERMES_API_KEY", "\"${localProperties.getProperty("HERMES_API_KEY", "hulao_2026_secure_api_key_change_in_production")}\"")
 
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))

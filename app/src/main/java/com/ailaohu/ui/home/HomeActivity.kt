@@ -68,6 +68,18 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
     private var isVoiceEngineInitialized = false
     private var isTryingToStartListening = false
     private var isFloatingButtonShown = false
+    private var isAutomationPaused = false
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            screenCaptureManager.savePermissionData(result.resultCode, result.data!!)
+            Log.d(TAG, "截屏权限已获取")
+        } else {
+            Log.w(TAG, "截屏权限被拒绝")
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -120,12 +132,14 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
         }
 
         voiceFeedbackPlayer.initialize()
+        initVoiceEngine()
         setupFloatingButtonCallbacks()
         observePipelineState()
         observeFloatingState()
         handleWakeUpIntent(intent)
         handleDebugCommand(intent)
         checkAndNavigate()
+        ensureScreenCapturePermission()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -238,6 +252,25 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
         }
     }
 
+    private fun ensureScreenCapturePermission() {
+        if (screenCaptureManager.needsReAuthorization()) {
+            Log.d(TAG, "截屏token缺失，需要重新授权")
+            lifecycleScope.launch {
+                delay(2000)
+                try {
+                    val mediaProjectionManager = getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                    screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                } catch (e: Exception) {
+                    Log.e(TAG, "请求截屏权限失败", e)
+                }
+            }
+        } else if (screenCaptureManager.hasPermission()) {
+            Log.d(TAG, "截屏权限已就绪")
+        } else {
+            Log.d(TAG, "截屏权限从未授权，等待权限引导页处理")
+        }
+    }
+
     private fun checkPermissionGuideStatus() {
         lifecycleScope.launch {
             if (isFinishing) return@launch
@@ -338,7 +371,16 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
         lifecycleScope.launch {
             viewModel.restartListeningEvent.collect {
                 Log.d(TAG, "收到重新开麦事件，自动开始录音")
+                isAutomationPaused = false
                 doStartListening()
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.pauseListeningEvent.collect {
+                Log.d(TAG, "收到暂停监听事件，停止语音识别")
+                isAutomationPaused = true
+                voiceRecognitionEngine.stopListening(true)
             }
         }
 
@@ -380,7 +422,11 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
                 requestOverlayPermission()
             }
         } else {
-            toggleVoiceRecognition()
+            if (voiceRecognitionEngine.isCurrentlyListening()) {
+                Log.d(TAG, "语音识别已在监听中，无需重复启动")
+            } else {
+                startListening()
+            }
         }
     }
 
@@ -583,6 +629,11 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
     }
 
     private fun doStartListening() {
+        if (isAutomationPaused) {
+            Log.d(TAG, "自动化执行中，忽略开麦请求")
+            return
+        }
+
         voiceStateMachine.requestListen {
             voiceStateMachine.transitionTo(VoicePipelineState.LISTENING, "manual")
 

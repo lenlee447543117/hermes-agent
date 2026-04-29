@@ -20,7 +20,14 @@ data class HermesChatResponse(
     val mode: String,
     val intent: String? = null,
     val action_payload: HermesActionPayload? = null,
-    val dialect: String = "shanghai"
+    val dialect: String = "shanghai",
+    val robot_ui_state: HermesRobotUiState? = null
+)
+
+data class HermesRobotUiState(
+    val emotion: String = "IDLE",
+    val status_text: String = "",
+    val show_mask: Boolean = false
 )
 
 data class HermesActionPayload(

@@ -111,10 +111,11 @@ fun HomeScreen(
             )
 
             // 主内容 - 宠物居中显示
-            MainContent(
-                uiState = uiState,
-                hintText = hints[hintIndex]
-            )
+        MainContent(
+            uiState = uiState,
+            hintText = hints[hintIndex],
+            onMicClick = onMicClick
+        )
 
             // 底部浮动导航栏
             FloatingNavBar(
@@ -420,11 +421,13 @@ fun NotificationBell(
  * 
  * @param uiState 界面状态
  * @param hintText 当前显示的提示文字
+ * @param onMicClick 麦克风点击回调
  */
 @Composable
 fun MainContent(
     uiState: HomeUiState,
-    hintText: String
+    hintText: String,
+    onMicClick: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -435,7 +438,8 @@ fun MainContent(
     ) {
         // 宠物形象区域
         PetSection(
-            uiState = uiState
+            uiState = uiState,
+            onClick = onMicClick
         )
 
         // 状态提示文字
@@ -669,10 +673,12 @@ fun AiResponseBubble(
  * 显示可爱的宠物动画，带漂浮效果和状态装饰
  * 
  * @param uiState 界面状态
+ * @param onClick 点击回调
  */
 @Composable
 fun PetSection(
-    uiState: HomeUiState
+    uiState: HomeUiState,
+    onClick: () -> Unit = {}
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "float")
     val floatOffset by infiniteTransition.animateFloat(
@@ -685,19 +691,32 @@ fun PetSection(
         label = "float"
     )
 
+    val isListening = uiState.voiceState == VoiceState.LISTENING
+
     Box(
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
     ) {
+        // 橙色光波动画（聆听时显示）
+        if (isListening) {
+            OrangeLightWaves()
+        }
+
         // 宠物周围的光晕效果
         Box(
             modifier = Modifier
-                .size(140.dp)
-                .offset(y = 80.dp)
-                .blur(16.dp)
+                .size(if (isListening) 240.dp else 140.dp)
+                .offset(y = if (isListening) 40.dp else 80.dp)
+                .blur(if (isListening) 24.dp else 16.dp)
                 .background(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFFFF9F0A).copy(alpha = 0.2f),
+                            Color(0xFFFF9F0A).copy(alpha = if (isListening) 0.4f else 0.2f),
                             Color.Transparent
                         )
                     ),
@@ -718,7 +737,7 @@ fun PetSection(
                     id = if (uiState.isPetHappy) R.drawable.happy else R.drawable.normal
                 ),
                 contentDescription = if (uiState.isPetHappy) "开心" else "正常",
-                modifier = Modifier.size(180.dp)
+                modifier = Modifier.size(if (isListening) 200.dp else 180.dp)
             )
 
             // 思考点点动画（处理中时显示）
@@ -727,15 +746,6 @@ fun PetSection(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .offset(y = -24.dp)
-                )
-            }
-
-            // 声波动画（聆听时显示）
-            if (uiState.voiceState == VoiceState.LISTENING) {
-                SoundWaves(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .offset(y = 10.dp)
                 )
             }
 
@@ -748,6 +758,83 @@ fun PetSection(
                 )
             }
         }
+    }
+}
+
+/**
+ * 橙色光波动画组件
+ * 多层向外扩散的橙色光波，显示AI正在聆听
+ */
+@Composable
+fun OrangeLightWaves() {
+    Box(
+        contentAlignment = Alignment.Center
+    ) {
+        // 4层不同大小和动画参数的光波
+        repeat(4) { index ->
+            OrangeLightWave(index = index)
+        }
+    }
+}
+
+/**
+ * 单层橙色光波
+ * 
+ * @param index 光波索引，用于错开动画
+ */
+@Composable
+fun OrangeLightWave(index: Int) {
+    val infiniteTransition = rememberInfiniteTransition(label = "light-wave-$index")
+    
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 0.6f + (index * 0.1f),
+        targetValue = 1.8f + (index * 0.2f),
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                2500 + (index * 200),
+                delayMillis = index * 300,
+                easing = EaseOut
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "light-wave-scale-$index"
+    )
+    
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.5f - (index * 0.08f),
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                2500 + (index * 200),
+                delayMillis = index * 300,
+                easing = EaseOut
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "light-wave-alpha-$index"
+    )
+
+    Canvas(
+        modifier = Modifier
+            .size(300.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                this.alpha = alpha
+            }
+    ) {
+        // 外层光晕圆
+        drawCircle(
+            color = Color(0xFFFF9F0A),
+            radius = size.minDimension / 2,
+            style = Stroke(width = (3 + index).dp.toPx())
+        )
+        
+        // 内层半透明填充
+        drawCircle(
+            color = Color(0xFFFF9F0A).copy(alpha = 0.08f),
+            radius = size.minDimension / 2
+        )
     }
 }
 

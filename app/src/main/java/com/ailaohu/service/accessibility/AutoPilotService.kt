@@ -111,6 +111,26 @@ class AutoPilotService : AccessibilityService() {
         fun getScreenInfo(): String? {
             return instance?.captureScreenInfo()
         }
+
+        fun clickNodeByText(text: String): Boolean {
+            return instance?.findAndClickNode(text, findBy = "text") ?: false
+        }
+
+        fun clickNodeByDesc(desc: String): Boolean {
+            return instance?.findAndClickNode(desc, findBy = "desc") ?: false
+        }
+
+        fun clickNodeByResourceId(resId: String): Boolean {
+            return instance?.findAndClickNode(resId, findBy = "resourceId") ?: false
+        }
+
+        fun hasNodeByText(text: String): Boolean {
+            return instance?.hasNode(text, findBy = "text") ?: false
+        }
+
+        fun hasNodeByDesc(desc: String): Boolean {
+            return instance?.hasNode(desc, findBy = "desc") ?: false
+        }
     }
 
     /**
@@ -253,23 +273,65 @@ class AutoPilotService : AccessibilityService() {
      */
     private fun typeText(text: String): Boolean {
         try {
-            val rootNode = rootInActiveWindow ?: return false
-            val focusNode = findFocusNode(rootNode)
-            if (focusNode != null) {
+            val rootNode = rootInActiveWindow
+            if (rootNode != null) {
+                val focusNode = findFocusNode(rootNode)
+                if (focusNode != null) {
+                    val arguments = android.os.Bundle()
+                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                    val result = focusNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                    Log.d(TAG, "输入文本(rootInActiveWindow): '$text' 结果=$result")
+                    focusNode.recycle()
+                    if (result) return true
+                }
+            }
+
+            for (window in windows) {
+                val windowRoot = window.root ?: continue
+                val focusNode = findFocusNode(windowRoot)
+                if (focusNode != null) {
+                    val arguments = android.os.Bundle()
+                    arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                    val result = focusNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                    Log.d(TAG, "输入文本(window ${windowRoot.packageName}): '$text' 结果=$result")
+                    focusNode.recycle()
+                    if (result) return true
+                }
+            }
+
+            Log.w(TAG, "所有窗口中均未找到可输入焦点节点，尝试查找EditText类节点")
+            val editNode = findNodeByClassName(rootNode ?: return false, "EditText")
+            if (editNode != null) {
                 val arguments = android.os.Bundle()
                 arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-                val result = focusNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-                Log.d(TAG, "输入文本: '$text' 结果=$result")
-                focusNode.recycle()
+                val result = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                Log.d(TAG, "输入文本(EditText): '$text' 结果=$result")
+                editNode.recycle()
                 return result
-            } else {
-                Log.w(TAG, "未找到可输入的焦点节点")
-                return false
             }
+
+            Log.w(TAG, "未找到可输入的焦点节点")
+            return false
         } catch (e: Exception) {
             Log.e(TAG, "输入文本失败", e)
             return false
         }
+    }
+
+    private fun findNodeByClassName(node: AccessibilityNodeInfo, className: String): AccessibilityNodeInfo? {
+        if (node.className?.toString()?.contains(className) == true && node.isEditable) {
+            return AccessibilityNodeInfo.obtain(node)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findNodeByClassName(child, className)
+            if (result != null) {
+                child.recycle()
+                return result
+            }
+            child.recycle()
+        }
+        return null
     }
 
     /**
@@ -332,6 +394,121 @@ class AutoPilotService : AccessibilityService() {
             Log.e(TAG, "获取屏幕信息失败", e)
             return "获取屏幕信息失败"
         }
+    }
+
+    private fun hasNode(target: String, findBy: String = "text"): Boolean {
+        try {
+            val rootNode = rootInActiveWindow ?: return false
+            val result = searchNode(rootNode, target, findBy)
+            return result
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    private fun searchNode(node: AccessibilityNodeInfo, target: String, findBy: String): Boolean {
+        val matchResult = when (findBy) {
+            "text" -> node.text?.toString()?.contains(target) == true
+            "desc" -> node.contentDescription?.toString()?.contains(target) == true
+            else -> false
+        }
+        if (matchResult) return true
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = searchNode(child, target, findBy)
+            child.recycle()
+            if (found) return true
+        }
+        return false
+    }
+
+    private fun findAndClickNode(target: String, findBy: String = "text"): Boolean {
+        try {
+            val rootNode = rootInActiveWindow
+            if (rootNode == null) {
+                Log.w(TAG, "findAndClickNode: rootInActiveWindow为null，无法查找[$findBy=$target]")
+            } else {
+                val pkg = rootNode.packageName?.toString() ?: "unknown"
+                Log.d(TAG, "findAndClickNode: 当前窗口包名=$pkg, 查找[$findBy=$target]")
+                val result = searchAndClickNode(rootNode, target, findBy)
+                if (result) return true
+            }
+
+            Log.d(TAG, "findAndClickNode: rootInActiveWindow未找到[$findBy=$target]，尝试遍历所有窗口")
+            val allWindows = windows
+            Log.d(TAG, "findAndClickNode: 共${allWindows.size}个窗口")
+            for ((index, window) in allWindows.withIndex()) {
+                val windowRoot = window.root
+                val windowPkg = windowRoot?.packageName?.toString() ?: "null"
+                Log.d(TAG, "findAndClickNode: 窗口[$index] pkg=$windowPkg layer=${window.layer}")
+                if (windowRoot != null) {
+                    val altResult = searchAndClickNode(windowRoot, target, findBy)
+                    if (altResult) {
+                        Log.d(TAG, "findAndClickNode: 在窗口[$index]中找到[$findBy=$target]")
+                        return true
+                    }
+                }
+            }
+            Log.d(TAG, "findAndClickNode: 所有窗口中均未找到[$findBy=$target]")
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "查找并点击节点失败: $target", e)
+            return false
+        }
+    }
+
+    private fun searchAndClickNode(node: AccessibilityNodeInfo, target: String, findBy: String): Boolean {
+        val matchResult = when (findBy) {
+            "text" -> node.text?.toString()?.contains(target) == true
+            "desc" -> node.contentDescription?.toString()?.contains(target) == true
+            "resourceId" -> node.viewIdResourceName?.contains(target) == true
+            else -> false
+        }
+
+        if (matchResult) {
+            var clickNode = node
+            if (!node.isClickable) {
+                var parent = node.parent
+                while (parent != null) {
+                    if (parent.isClickable) {
+                        clickNode = parent
+                        break
+                    }
+                    val grandParent = parent.parent
+                    parent.recycle()
+                    parent = grandParent
+                }
+            }
+            val result = clickNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "点击节点[$findBy=$target] clickable=${clickNode.isClickable} 结果=$result")
+            if (result) return true
+
+            val bounds = android.graphics.Rect()
+            clickNode.getBoundsInScreen(bounds)
+            if (!bounds.isEmpty) {
+                val centerX = (bounds.left + bounds.right) / 2f
+                val centerY = (bounds.top + bounds.bottom) / 2f
+                val wm = instance?.getSystemService(WINDOW_SERVICE) as? android.view.WindowManager
+                val metrics = android.util.DisplayMetrics()
+                wm?.defaultDisplay?.getMetrics(metrics)
+                if (metrics.widthPixels > 0 && metrics.heightPixels > 0) {
+                    val normX = centerX / metrics.widthPixels
+                    val normY = centerY / metrics.heightPixels
+                    Log.d(TAG, "ACTION_CLICK失败，使用手势点击坐标($normX, $normY)")
+                    return clickAt(normX, normY)
+                }
+            }
+            return false
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = searchAndClickNode(child, target, findBy)
+            child.recycle()
+            if (found) return true
+        }
+        return false
     }
 
     /**

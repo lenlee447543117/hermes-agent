@@ -422,18 +422,7 @@ fun FloatingVoiceButton(
                             indication = null
                         ) {
                             onMicClick()
-                        }
-                        .then(
-                            Modifier.pointerInput(Unit) {
-                                detectDragGestures(
-                                    onDragStart = {},
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        onDrag(dragAmount.x, dragAmount.y)
-                                    }
-                                )
-                            }
-                        ),
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

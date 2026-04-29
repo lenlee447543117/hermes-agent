@@ -759,8 +759,15 @@ class APIServerAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     async def _handle_health(self, request: "web.Request") -> "web.Response":
-        """GET /health — simple health check."""
-        return web.json_response({"status": "ok", "platform": "hermes-agent"})
+        """GET /health — simple health check (compatible with Hulao App)."""
+        return web.json_response({
+            "status": "ok",
+            "service": "hermes-agent",
+            "version": "2.0.0",
+            "user_id": "system",
+            "timestamp": int(time.time()),
+            "platform": "hermes-agent",
+        })
 
     async def _handle_health_detailed(self, request: "web.Request") -> "web.Response":
         """GET /health/detailed — rich status for cross-container dashboard probing.
@@ -781,6 +788,242 @@ class APIServerAdapter(BasePlatformAdapter):
             "exit_reason": runtime.get("exit_reason"),
             "updated_at": runtime.get("updated_at"),
             "pid": os.getpid(),
+        })
+
+    # ------------------------------------------------------------------
+    # Hulao App专用API处理函数
+    # ------------------------------------------------------------------
+
+    _HULAO_SYSTEM_PROMPT = """你是"沪老"，一位温暖、耐心、贴心的AI老人助手。
+
+核心原则：
+1. 说短句，每句不超过15个字
+2. 操作指导只说一步，等确认后再说下一步
+3. 用生活化比喻解释技术概念
+4. 多鼓励，"您真棒！""太厉害了！"
+5. 涉及金钱操作必须反复确认
+6. 紧急情况建议拨打120或联系家人
+
+你可以帮助老人：打电话、发短信、微信聊天、导航、设闹钟、
+查天气、提醒吃药、拍照等手机操作。"""
+
+    _hulao_habit_store: Dict[str, Dict[str, Any]] = {}
+
+    async def _handle_hulao_chat(self, request: "web.Request") -> "web.Response":
+        """POST /api/v1/chat — Hulao App对话接口"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        user_id = body.get("user_id", "default")
+        message = body.get("message", "")
+        dialect = body.get("dialect", "mandarin")
+        context = body.get("context", [])
+
+        if not message:
+            return web.json_response({"error": "Missing message"}, status=400)
+
+        try:
+            conversation_history = []
+            if context:
+                for msg in context:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role in ("user", "assistant") and content:
+                        conversation_history.append({"role": role, "content": content})
+
+            result, usage = await self._run_agent(
+                user_message=message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=self._HULAO_SYSTEM_PROMPT,
+                session_id=f"hulao-{user_id}",
+            )
+
+            final_response = result.get("final_response", "")
+            if not final_response:
+                final_response = result.get("error", "抱歉，我暂时无法回应，请稍后再试。")
+
+            reply = final_response
+            mode = "CHAT"
+            intent = None
+            target_person = None
+            action_payload = None
+
+            lower_msg = message.lower()
+            if any(kw in lower_msg for kw in ["打电话", "拨号", "呼叫", "视频电话", "微信电话"]):
+                mode = "ACTION"
+                intent = "CALL"
+                for contact_kw in ["给", "跟", "和"]:
+                    if contact_kw in message:
+                        parts = message.split(contact_kw)
+                        if len(parts) > 1:
+                            target_person = parts[-1].strip().rstrip("打电话视频")
+                            break
+                action_payload = {
+                    "intent": "CALL",
+                    "target_person": target_person,
+                    "parameters": {"call_type": "video" if "视频" in message else "voice"},
+                }
+            elif any(kw in lower_msg for kw in ["发短信", "发消息", "发信息"]):
+                mode = "ACTION"
+                intent = "SMS"
+                action_payload = {"intent": "SMS", "target_person": None, "parameters": {}}
+            elif any(kw in lower_msg for kw in ["打开", "开"]):
+                if any(app in lower_msg for app in ["微信", "淘宝", "支付宝", "相机", "相册", "设置"]):
+                    mode = "ACTION"
+                    intent = "OPEN_APP"
+                    action_payload = {"intent": "OPEN_APP", "target_person": None, "parameters": {}}
+            elif any(kw in lower_msg for kw in ["闹钟", "提醒", "几点"]):
+                mode = "ACTION"
+                intent = "ALARM"
+                action_payload = {"intent": "ALARM", "target_person": None, "parameters": {}}
+            elif any(kw in lower_msg for kw in ["天气"]):
+                mode = "ACTION"
+                intent = "WEATHER"
+                action_payload = {"intent": "WEATHER", "target_person": None, "parameters": {}}
+            elif any(kw in lower_msg for kw in ["导航", "地图", "怎么走"]):
+                mode = "ACTION"
+                intent = "NAVIGATE"
+                action_payload = {"intent": "NAVIGATE", "target_person": None, "parameters": {}}
+
+            response_data = {
+                "reply": reply,
+                "mode": mode,
+                "intent": intent,
+                "action_payload": action_payload,
+                "dialect": dialect,
+            }
+            return web.json_response(response_data)
+
+        except Exception as e:
+            logger.error("Hulao chat error: %s", e, exc_info=True)
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_hulao_action(self, request: "web.Request") -> "web.Response":
+        """POST /api/v1/action — Hulao App操作执行接口"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        trace_id = body.get("trace_id", str(uuid.uuid4()))
+        payload = body.get("payload", {})
+
+        logger.info("Hulao action request: trace_id=%s, payload=%s", trace_id, payload)
+
+        return web.json_response({
+            "status": "accepted",
+            "trace_id": trace_id,
+        })
+
+    async def _handle_hulao_habit(self, request: "web.Request") -> "web.Response":
+        """GET /api/v1/habit/{userId} — 获取用户习惯画像"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        user_id = request.match_info.get("userId", "default")
+        profile = self._hulao_habit_store.get(user_id, {
+            "user_id": user_id,
+            "active_hours": [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            "frequent_contacts": [],
+            "preferred_call_type": "voice",
+            "dialect_preference": "mandarin",
+            "volume_preference": 70,
+            "font_scale": 1.5,
+            "chat_frequency": 0.0,
+        })
+        return web.json_response(profile)
+
+    async def _handle_hulao_habit_update(self, request: "web.Request") -> "web.Response":
+        """PUT /api/v1/habit/{userId} — 更新用户习惯画像"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        user_id = request.match_info.get("userId", "default")
+        try:
+            updates = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        current = self._hulao_habit_store.get(user_id, {
+            "user_id": user_id,
+            "active_hours": [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            "frequent_contacts": [],
+            "preferred_call_type": "voice",
+            "dialect_preference": "mandarin",
+            "volume_preference": 70,
+            "font_scale": 1.5,
+            "chat_frequency": 0.0,
+        })
+        current.update(updates)
+        self._hulao_habit_store[user_id] = current
+        return web.json_response(current)
+
+    async def _handle_hulao_daily_report(self, request: "web.Request") -> "web.Response":
+        """GET /api/v1/habit/{userId}/report — 获取每日报告"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        user_id = request.match_info.get("userId", "default")
+        from datetime import date
+        report = {
+            "date": str(date.today()),
+            "sleep_status": "normal",
+            "device_usage_minutes": 0,
+            "operation_difficulties": [],
+            "emotion_tendency": "neutral",
+            "anomaly_warnings": [],
+        }
+        return web.json_response(report)
+
+    async def _handle_hulao_care(self, request: "web.Request") -> "web.Response":
+        """GET /api/v1/habit/{userId}/care — 主动关怀检查"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        user_id = request.match_info.get("userId", "default")
+        care = {
+            "user_id": user_id,
+            "message": "",
+            "dialect": "mandarin",
+            "care_type": "none",
+            "priority": "normal",
+        }
+        return web.json_response(care)
+
+    async def _handle_hulao_sync_config(self, request: "web.Request") -> "web.Response":
+        """POST /api/v1/sync-config — 同步配置"""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        user_id = body.get("user_id", "default")
+        updated_fields = [k for k in body.keys() if k != "user_id"]
+
+        logger.info("Hulao sync config: user_id=%s, fields=%s", user_id, updated_fields)
+
+        return web.json_response({
+            "success": True,
+            "message": "Config synced successfully",
+            "updated_fields": updated_fields,
         })
 
     async def _handle_models(self, request: "web.Request") -> "web.Response":
@@ -2589,6 +2832,14 @@ class APIServerAdapter(BasePlatformAdapter):
             # Structured event streaming
             self._app.router.add_post("/v1/runs", self._handle_runs)
             self._app.router.add_get("/v1/runs/{run_id}/events", self._handle_run_events)
+            # Hulao App专用API路由
+            self._app.router.add_post("/api/v1/chat", self._handle_hulao_chat)
+            self._app.router.add_post("/api/v1/action", self._handle_hulao_action)
+            self._app.router.add_get("/api/v1/habit/{userId}", self._handle_hulao_habit)
+            self._app.router.add_put("/api/v1/habit/{userId}", self._handle_hulao_habit_update)
+            self._app.router.add_get("/api/v1/habit/{userId}/report", self._handle_hulao_daily_report)
+            self._app.router.add_get("/api/v1/habit/{userId}/care", self._handle_hulao_care)
+            self._app.router.add_post("/api/v1/sync-config", self._handle_hulao_sync_config)
             # Start background sweep to clean up orphaned (unconsumed) run streams
             sweep_task = asyncio.create_task(self._sweep_orphaned_runs())
             try:

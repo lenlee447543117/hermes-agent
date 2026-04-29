@@ -20,6 +20,9 @@ import com.ailaohu.data.local.prefs.AppPreferences
 import com.ailaohu.data.repository.ContactRepository
 import com.ailaohu.domain.usecase.CallTaxiUseCase
 import com.ailaohu.domain.usecase.ExecuteWeChatCallUseCase
+import com.ailaohu.domain.usecase.WeatherInfoUseCase
+import com.ailaohu.domain.usecase.NewsInfoUseCase
+import com.ailaohu.domain.usecase.MedicineReminderUseCase
 import com.ailaohu.service.chat.ChatService
 import com.ailaohu.service.care.ProactiveCareService
 import com.ailaohu.service.habit.HabitTrackingService
@@ -100,6 +103,9 @@ class HomeViewModel @Inject constructor(
     private val contactRepository: ContactRepository,
     private val callTaxiUseCase: CallTaxiUseCase,
     private val executeWeChatCallUseCase: ExecuteWeChatCallUseCase,
+    private val weatherInfoUseCase: WeatherInfoUseCase,
+    private val newsInfoUseCase: NewsInfoUseCase,
+    private val medicineReminderUseCase: MedicineReminderUseCase,
     private val appPreferences: AppPreferences,
     private val networkMonitor: NetworkMonitor,
     private val ttsManager: TTSManager,
@@ -130,6 +136,9 @@ class HomeViewModel @Inject constructor(
 
     private val _restartListeningEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val restartListeningEvent: SharedFlow<Unit> = _restartListeningEvent.asSharedFlow()
+
+    private val _pauseListeningEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val pauseListeningEvent: SharedFlow<Unit> = _pauseListeningEvent.asSharedFlow()
 
     var currentPartialText: String = ""
         private set
@@ -220,7 +229,7 @@ class HomeViewModel @Inject constructor(
             return
         }
 
-        if (command !is VoiceCommand.ConfirmAction && command !is VoiceCommand.CancelAction) {
+        if (command is VoiceCommand.CancelAction) {
             executeWeChatCallUseCase.cancel()
         }
 
@@ -234,6 +243,22 @@ class HomeViewModel @Inject constructor(
             if (command is VoiceCommand.CancelAction) {
                 handleCancelAction()
                 return@launch
+            }
+
+            // 处理等待时间输入状态（吃药提醒追问时间场景）
+            val pending = _uiState.value.pendingAction
+            if (pending != null && pending.command is VoiceCommand.MedicineReminder) {
+                val timeFromSpeech = voiceCommandParser.extractTimeFromText(_uiState.value.recognizedText)
+                if (timeFromSpeech.isNotEmpty()) {
+                    _uiState.update { it.copy(pendingAction = null) }
+                    executeMedicineReminder(
+                        VoiceCommand.MedicineReminder(
+                            (pending.command as VoiceCommand.MedicineReminder).medicineName,
+                            timeFromSpeech
+                        )
+                    )
+                    return@launch
+                }
             }
 
             // 处理重复上一条指令
@@ -324,7 +349,20 @@ class HomeViewModel @Inject constructor(
                 doEmergencySOS(pending.command as VoiceCommand.EmergencySOS)
             }
             PendingActionType.NONE -> {
-                speakAndRespond("没有需要确认的操作")
+                if (pending.command is VoiceCommand.MedicineReminder) {
+                    val cmd = pending.command as VoiceCommand.MedicineReminder
+                    val recognizedText = _uiState.value.recognizedText
+                    val timeFromSpeech = voiceCommandParser.extractTimeFromText(recognizedText)
+                    if (timeFromSpeech.isNotEmpty()) {
+                        executeMedicineReminder(
+                            VoiceCommand.MedicineReminder(cmd.medicineName, timeFromSpeech)
+                        )
+                    } else {
+                        speakAndRespond("没听清时间，请再说一次，比如\"早上8点\"")
+                    }
+                } else {
+                    speakAndRespond("没有需要确认的操作")
+                }
             }
         }
     }
@@ -421,6 +459,7 @@ class HomeViewModel @Inject constructor(
     private suspend fun doWeChatCall(command: VoiceCommand.WeChatCall) {
         isAutomationRunning = true
         _uiState.update { it.copy(isLoading = true) }
+        _pauseListeningEvent.emit(Unit)
         val callType = if (command.isVideo) "视频" else "语音"
         ttsManager.speak("正在帮您给${command.contactName}打${callType}电话，请稍等")
 
@@ -442,6 +481,7 @@ class HomeViewModel @Inject constructor(
         } finally {
             isAutomationRunning = false
             _uiState.update { it.copy(isLoading = false) }
+            _restartListeningEvent.emit(Unit)
         }
     }
 
@@ -824,26 +864,47 @@ class HomeViewModel @Inject constructor(
      */
     private suspend fun executeMedicineReminder(command: VoiceCommand.MedicineReminder) {
         val medicineName = if (command.medicineName.isNotEmpty()) command.medicineName else "药"
-        val timeText = if (command.time.isNotEmpty()) command.time else ""
+        val timeText = command.time
 
-        // 设置闹钟提醒
+        if (timeText.isEmpty()) {
+            _uiState.update {
+                it.copy(pendingAction = PendingAction(
+                    type = PendingActionType.NONE,
+                    command = command,
+                    description = "设置${medicineName}提醒时间"
+                ))
+            }
+            speakAndRespond("好的，您想几点提醒您吃${medicineName}？请告诉我时间，比如\"早上8点\"")
+            return
+        }
+
+        _uiState.update { it.copy(isLoading = true) }
         try {
-            val label = "吃药提醒 - $medicineName"
-            val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                putExtra(AlarmClock.EXTRA_MESSAGE, label)
-                putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            if (intent.resolveActivity(context.packageManager) != null) {
-                context.startActivity(intent)
-                val timeMsg = if (timeText.isNotEmpty()) "，时间$timeText" else ""
-                speakAndRespond("好的，已为您设置${medicineName}的吃药提醒$timeMsg。记得按时吃药哦~")
-            } else {
-                speakAndRespond("好的，记得按时吃${medicineName}哦~")
-            }
+            ttsManager.speak("正在为您设置${medicineName}的提醒")
+
+            val result = medicineReminderUseCase.createReminder(
+                medicineName = medicineName,
+                time = timeText
+            )
+
+            result.fold(
+                onSuccess = { reminderInfo ->
+                    if (reminderInfo.confirmed && reminderInfo.jobId != null) {
+                        speakAndRespond("好的，已设好${medicineName}的提醒，每天${timeText}会提醒您吃药。记得按时吃哦~")
+                    } else {
+                        speakAndRespond("好的，我会提醒您${timeText}吃${medicineName}的。记得按时吃哦~")
+                    }
+                },
+                onFailure = { e ->
+                    Log.e(TAG, "设置吃药提醒失败", e)
+                    speakAndRespond("好的，记得${timeText}吃${medicineName}哦~")
+                }
+            )
         } catch (e: Exception) {
             Log.e(TAG, "设置吃药提醒失败", e)
             speakAndRespond("好的，记得按时吃${medicineName}哦~")
+        } finally {
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 
@@ -883,17 +944,29 @@ class HomeViewModel @Inject constructor(
      * 执行读新闻
      */
     private suspend fun executeReadNews(command: VoiceCommand.ReadNews) {
+        _uiState.update { it.copy(isLoading = true) }
         try {
-            val query = if (command.topic.isNotEmpty()) command.topic else "今日新闻"
-            val url = "https://www.baidu.com/s?wd=${Uri.encode(query)}"
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            speakAndRespond("正在为您打开${query}")
+            val topic = if (command.topic.isNotEmpty()) command.topic else "今日热点"
+            ttsManager.speak("正在帮您看看${topic}，请稍等")
+
+            val result = newsInfoUseCase.execute(topic)
+            result.fold(
+                onSuccess = { newsInfo ->
+                    speakAndRespond(newsInfo.summary)
+                    kotlinx.coroutines.delay(1500)
+                    newsInfoUseCase.navigateToNewsApp()
+                },
+                onFailure = { e ->
+                    Log.e(TAG, "读新闻失败", e)
+                    speakAndRespond("获取新闻失败，正在为您打开新闻应用")
+                    newsInfoUseCase.navigateToNewsApp()
+                }
+            )
         } catch (e: Exception) {
-            Log.e(TAG, "打开新闻失败", e)
-            speakAndRespond("打开新闻失败，请稍后再试")
+            Log.e(TAG, "读新闻失败", e)
+            speakAndRespond("读新闻失败，请稍后再试")
+        } finally {
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 
@@ -901,17 +974,29 @@ class HomeViewModel @Inject constructor(
      * 执行查询天气
      */
     private suspend fun executeQueryWeather(command: VoiceCommand.QueryWeather) {
+        _uiState.update { it.copy(isLoading = true) }
         try {
-            val query = if (command.city.isNotEmpty()) "${command.city}天气" else "今天天气"
-            val url = "https://www.baidu.com/s?wd=${Uri.encode(query)}"
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            speakAndRespond("正在为您查询${query}")
+            val cityName = if (command.city.isNotEmpty()) command.city else "上海"
+            ttsManager.speak("正在帮您查${cityName}天气，请稍等")
+
+            val result = weatherInfoUseCase.execute(cityName)
+            result.fold(
+                onSuccess = { weatherInfo ->
+                    speakAndRespond(weatherInfo.summary)
+                    kotlinx.coroutines.delay(1500)
+                    weatherInfoUseCase.navigateToWeatherApp(cityName)
+                },
+                onFailure = { e ->
+                    Log.e(TAG, "查询天气失败", e)
+                    speakAndRespond("查询天气失败，正在为您打开天气应用")
+                    weatherInfoUseCase.navigateToWeatherApp(cityName)
+                }
+            )
         } catch (e: Exception) {
             Log.e(TAG, "查询天气失败", e)
             speakAndRespond("查询天气失败，请稍后再试")
+        } finally {
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 

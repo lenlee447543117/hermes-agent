@@ -416,6 +416,10 @@ class VoiceCommandParser @Inject constructor(
     }
 
     private fun extractTime(text: String): String {
+        return extractTimeFromText(text)
+    }
+
+    fun extractTimeFromText(text: String): String {
         val patterns = listOf(
             Regex("(\\d+)点(\\d+)?分?"),
             Regex("(\\d+):(\\d+)"),

@@ -19,7 +19,7 @@ __pycache__/
 .env.test
 export*
 logs/
-data/
+/data/
 .pytest_cache/
 tmp/
 temp_vision_images/
