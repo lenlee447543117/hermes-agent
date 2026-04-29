@@ -139,25 +139,26 @@ class ExecuteWeChatCallUseCase @Inject constructor(
     }
 
     private suspend fun clickSearchButton(): Boolean {
-        val coord = findElementWithVlm(PromptBuilder.buildWeChatSearchButtonPrompt())
-        if (coord != null) {
-            clickCoordinate(coord)
-            return true
-        }
-
-        Log.w(TAG, "VLM未找到搜索按钮，尝试无障碍节点查找")
-        val searchClicked = AutoPilotService.clickNodeByText("搜索")
+        Log.d(TAG, "尝试无障碍节点查找搜索按钮")
+        val searchClicked = AutoPilotService.clickNodeByDesc("搜尋")
                 || AutoPilotService.clickNodeByDesc("搜索")
-                || AutoPilotService.clickNodeByDesc("搜尋")
                 || AutoPilotService.clickNodeByDesc("Search")
+                || AutoPilotService.clickNodeByText("搜索")
                 || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/jha")
         if (searchClicked) {
             Log.d(TAG, "通过无障碍节点点击搜索成功")
             return true
         }
 
-        Log.w(TAG, "无障碍也未找到搜索节点，尝试点击搜索图标区域")
-        AutoPilotService.performClick(0.84f, 0.05f)
+        Log.w(TAG, "无障碍未找到搜索节点，尝试VLM识别")
+        val coord = findElementWithVlm(PromptBuilder.buildWeChatSearchButtonPrompt())
+        if (coord != null) {
+            clickCoordinate(coord)
+            return true
+        }
+
+        Log.w(TAG, "VLM也未找到搜索按钮，尝试点击搜索图标区域")
+        AutoPilotService.performClick(0.84f, 0.058f)
         delay(500)
         return true
     }
@@ -193,6 +194,22 @@ class ExecuteWeChatCallUseCase @Inject constructor(
     private suspend fun clickSearchResult(contactName: String): Boolean {
         delay(500)
 
+        Log.d(TAG, "尝试无障碍节点查找搜索结果: $contactName")
+        val nodeClicked = AutoPilotService.clickNodeByText(contactName)
+                || AutoPilotService.clickNodeByDesc(contactName)
+        if (nodeClicked) {
+            Log.d(TAG, "通过无障碍节点点击搜索结果成功")
+            return true
+        }
+
+        val firstResultClicked = AutoPilotService.clickNodeByDesc("聯絡人")
+                || AutoPilotService.clickNodeByDesc("联系人")
+        if (firstResultClicked) {
+            Log.d(TAG, "点击第一个联系人分类结果")
+            return true
+        }
+
+        Log.w(TAG, "无障碍未找到搜索结果，尝试VLM识别")
         val coord = findElementWithVlm(
             PromptBuilder.buildFindElementPrompt("搜索结果中包含「$contactName」的联系人条目")
         )
@@ -201,23 +218,7 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             return true
         }
 
-        Log.w(TAG, "VLM未找到搜索结果，尝试无障碍节点查找")
-        val nodeClicked = AutoPilotService.clickNodeByText(contactName)
-                || AutoPilotService.clickNodeByDesc(contactName)
-        if (nodeClicked) {
-            Log.d(TAG, "通过无障碍节点点击搜索结果成功")
-            return true
-        }
-
-        Log.w(TAG, "无障碍也未找到精确匹配，尝试点击第一个联系人结果")
-        val firstResultClicked = AutoPilotService.clickNodeByDesc("聯絡人")
-                || AutoPilotService.clickNodeByDesc("联系人")
-        if (firstResultClicked) {
-            Log.d(TAG, "点击第一个联系人分类结果")
-            return true
-        }
-
-        Log.w(TAG, "尝试点击搜索结果列表第一个区域")
+        Log.w(TAG, "VLM也未找到搜索结果，尝试点击搜索结果列表第一个区域")
         AutoPilotService.performClick(0.5f, 0.20f)
         return true
     }
@@ -225,25 +226,26 @@ class ExecuteWeChatCallUseCase @Inject constructor(
     private suspend fun clickCallButton(isVideoCall: Boolean): Boolean {
         delay(1500)
 
-        val plusCoord = findElementWithVlm(PromptBuilder.buildWeChatVideoCallPrompt())
-        if (plusCoord != null) {
-            clickCoordinate(plusCoord)
-            Log.d(TAG, "已通过VLM点击加号按钮，等待菜单弹出")
+        Log.d(TAG, "尝试无障碍节点查找加号按钮")
+        val plusClicked = AutoPilotService.clickNodeByDesc("更多功能按鈕，已收起")
+                || AutoPilotService.clickNodeByDesc("更多功能按钮，已收起")
+                || AutoPilotService.clickNodeByDesc("更多功能")
+                || AutoPilotService.clickNodeByDesc("更多功能按钮")
+                || AutoPilotService.clickNodeByDesc("加号")
+                || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/bjz")
+                || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/jga")
+        if (plusClicked) {
+            Log.d(TAG, "通过无障碍节点点击加号成功")
             delay(MENU_POPUP_DELAY)
         } else {
-            Log.w(TAG, "VLM未找到加号按钮，尝试无障碍节点查找")
-            val plusClicked = AutoPilotService.clickNodeByDesc("更多功能按鈕，已收起")
-                    || AutoPilotService.clickNodeByDesc("更多功能按钮，已收起")
-                    || AutoPilotService.clickNodeByDesc("更多功能")
-                    || AutoPilotService.clickNodeByDesc("更多功能按钮")
-                    || AutoPilotService.clickNodeByDesc("加号")
-                    || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/bjz")
-                    || AutoPilotService.clickNodeByResourceId("com.tencent.mm:id/jga")
-            if (plusClicked) {
-                Log.d(TAG, "通过无障碍节点点击加号成功")
+            Log.w(TAG, "无障碍未找到加号按钮，尝试VLM识别")
+            val plusCoord = findElementWithVlm(PromptBuilder.buildWeChatVideoCallPrompt())
+            if (plusCoord != null) {
+                clickCoordinate(plusCoord)
+                Log.d(TAG, "已通过VLM点击加号按钮，等待菜单弹出")
                 delay(MENU_POPUP_DELAY)
             } else {
-                Log.w(TAG, "无障碍也未找到加号按钮，点击右下角+按钮区域")
+                Log.w(TAG, "VLM也未找到加号按钮，点击右下角+按钮区域")
                 AutoPilotService.performClick(0.94f, 0.95f)
                 delay(MENU_POPUP_DELAY)
             }
@@ -251,17 +253,7 @@ class ExecuteWeChatCallUseCase @Inject constructor(
 
         delay(500)
 
-        val callPrompt = if (isVideoCall) PromptBuilder.buildWeChatVideoCallOptionPrompt()
-        else PromptBuilder.buildWeChatVoiceCallOptionPrompt()
-        val callCoord = findElementWithVlm(callPrompt)
-        if (callCoord != null) {
-            clickCoordinate(callCoord)
-            delay(1500)
-            handleCallTypeSelection(isVideoCall)
-            return true
-        }
-
-        Log.w(TAG, "VLM未找到通话按钮，尝试无障碍节点查找")
+        Log.d(TAG, "尝试无障碍节点查找通话按钮")
         val callClicked = if (isVideoCall) {
             AutoPilotService.clickNodeByText("视频通话")
                     || AutoPilotService.clickNodeByText("視訊通話")
@@ -280,7 +272,18 @@ class ExecuteWeChatCallUseCase @Inject constructor(
             return true
         }
 
-        Log.w(TAG, "无障碍也未找到通话按钮，尝试固定位置点击")
+        Log.w(TAG, "无障碍未找到通话按钮，尝试VLM识别")
+        val callPrompt = if (isVideoCall) PromptBuilder.buildWeChatVideoCallOptionPrompt()
+        else PromptBuilder.buildWeChatVoiceCallOptionPrompt()
+        val callCoord = findElementWithVlm(callPrompt)
+        if (callCoord != null) {
+            clickCoordinate(callCoord)
+            delay(1500)
+            handleCallTypeSelection(isVideoCall)
+            return true
+        }
+
+        Log.w(TAG, "VLM也未找到通话按钮，尝试固定位置点击")
         if (isVideoCall) {
             AutoPilotService.performClick(0.62f, 0.71f)
         } else {

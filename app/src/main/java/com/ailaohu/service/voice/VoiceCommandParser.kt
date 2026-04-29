@@ -76,6 +76,12 @@ class VoiceCommandParser @Inject constructor(
         private val WEATHER_KEYWORDS = listOf("天气", "温度", "下雨")
         // 新增：紧急求助关键词
         private val EMERGENCY_KEYWORDS = listOf("救命", "紧急", "求救", "帮帮我", "不好了", "出事了", "摔倒", "摔了", "疼", "不舒服", "急救", "120")
+        private val NOISE_PATTERNS = listOf(
+            "这段音频", "这段录音", "这个录音", "白噪音", "运行声音",
+            "没有语言", "没有语音", "机器的运行", "音频是一段",
+            "背景噪音", "环境噪音", "无法识别", "听不清",
+            "静音", "嗡嗡声", "嘶嘶声"
+        )
         // 新增：吃药提醒关键词
         private val MEDICINE_KEYWORDS = listOf("吃药", "药", "服药", "降压药", "降糖药", "感冒药", "止痛药", "维生素", "钙片", "胰岛素")
         // 新增：位置分享关键词
@@ -139,6 +145,11 @@ class VoiceCommandParser @Inject constructor(
         android.util.Log.d(TAG, "开始解析指令: '$t'")
 
         if (t.isEmpty()) return VoiceCommand.Unknown
+
+        if (NOISE_PATTERNS.any { t.contains(it) }) {
+            android.util.Log.d(TAG, "检测到噪音误识别，忽略: '$t'")
+            return VoiceCommand.Unknown
+        }
 
         // 优先检查紧急求助（最高优先级）
         if (EMERGENCY_KEYWORDS.any { t.contains(it) }) {

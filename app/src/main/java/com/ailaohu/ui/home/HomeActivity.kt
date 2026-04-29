@@ -418,14 +418,17 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
             if (checkOverlayPermission()) {
                 showFloatingButton()
                 startListening()
+                voiceFeedbackPlayer.playStartTone()
             } else {
                 requestOverlayPermission()
             }
         } else {
             if (voiceRecognitionEngine.isCurrentlyListening()) {
                 Log.d(TAG, "语音识别已在监听中，无需重复启动")
+                voiceFeedbackPlayer.playStartTone()
             } else {
                 startListening()
+                voiceFeedbackPlayer.playStartTone()
             }
         }
     }
@@ -546,7 +549,9 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
                 runOnUiThread {
                     voiceFeedbackPlayer.playErrorTone()
                     voiceStateMachine.transitionTo(VoicePipelineState.IDLE, "error")
-                    if (error.contains("权限")) {
+                    if (error.contains("连续识别失败")) {
+                        voiceStateMachine.speakAndWait("识别遇到了问题，请点击按钮重新开始")
+                    } else if (error.contains("权限")) {
                         voiceStateMachine.speakThenListen("请允许麦克风权限") {
                             doStartListening()
                         }
@@ -634,20 +639,18 @@ class HomeActivity : ComponentActivity(), FaceDetectionManager.FaceDetectionCall
             return
         }
 
-        voiceStateMachine.requestListen {
-            voiceStateMachine.transitionTo(VoicePipelineState.LISTENING, "manual")
+        if (ttsManager.isCurrentlySpeaking) {
+            ttsManager.stop()
+        }
 
-            if (ttsManager.isCurrentlySpeaking) {
-                ttsManager.stop()
-            }
+        voiceStateMachine.transitionTo(VoicePipelineState.LISTENING, "manual")
 
-            try {
-                voiceRecognitionEngine.startContinuousListening()
-                Log.d(TAG, "语音识别引擎已启动（连续模式）")
-            } catch (e: Exception) {
-                Log.e(TAG, "启动语音识别失败", e)
-                voiceStateMachine.speakAndWait("启动语音识别失败，请稍后再试")
-            }
+        try {
+            voiceRecognitionEngine.startContinuousListening()
+            Log.d(TAG, "语音识别引擎已启动（连续模式）")
+        } catch (e: Exception) {
+            Log.e(TAG, "启动语音识别失败", e)
+            voiceStateMachine.speakAndWait("启动语音识别失败，请稍后再试")
         }
     }
 

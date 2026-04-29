@@ -48,7 +48,7 @@ class VoiceRecognitionEngine @Inject constructor(
      * ZHIPU_CLOUD: 智谱云端语音识别
      * DIRECT: 直接发送音频+截图给AutoGLM-Phone，不转文字
      */
-    enum class Backend { LOCAL, ZHIPU_CLOUD, DIRECT }
+    enum class Backend { LOCAL, ZHIPU_CLOUD, DIRECT, VOSK_OFFLINE }
 
     companion object {
         private const val TAG = "VoiceEngine"
@@ -1054,9 +1054,12 @@ class VoiceRecognitionEngine @Inject constructor(
         if (continuousMode && !manuallyStopped) {
             quickErrorRetries++
             if (quickErrorRetries > QUICK_ERROR_MAX_RETRIES) {
-                Log.e(TAG, "快速错误次数过多，尝试切换到本地识别")
-                onErrorCallback?.invoke("录音异常，请稍候再试")
+                Log.e(TAG, "快速错误次数过多，暂停连续监听")
+                continuousMode = false
                 quickErrorRetries = 0
+                isListening = false
+                onErrorCallback?.invoke("连续识别失败，请点击按钮重新开始")
+                return
             } else {
                 scheduleRestart()
             }

@@ -36,7 +36,7 @@ class TermuxBridge @Inject constructor(
         private const val TAG = "TermuxBridge"
         private const val TERMUX_API_PACKAGE = "com.termux.api"
         private const val TERMUX_API_RECEIVER = "com.termux.api.TermuxApiReceiver"
-        private const val HERMES_AGENT_URL = "http://127.0.0.1:8642"
+        private const val HERMES_AGENT_URL = "http://127.0.0.1:8643"
 
         private val ALLOWED_COMMANDS = setOf(
             "VOLUME", "CAMERA", "NOTIFICATION", "TTS_SPEAK", "TTS_STOP",
